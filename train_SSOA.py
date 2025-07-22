@@ -103,9 +103,7 @@ def train_supplier_selection(dataset, K, strategy):
     print(f"Supplier Dimension: {supplier_num}, State Space: {state_space}")
 
     env_kwargs = {
-        # "hmax": 100, 
         "initial_shortage": 0, 
-        # "transaction_cost_pct": 0.001, 
         "state_space": state_space, 
         "supplier_num": supplier_num, 
         # "tech_indicator_list": config.TECHNICAL_INDICATORS_LIST, 
