@@ -12,7 +12,6 @@ import time
 import config
 from preprocessor.dataloader import DataLoader
 from preprocessor.preprocessors import FeatureEngineer, data_split, series_decomposition
-# from finrl.neo_finrl.env_stock_trading.env_stocktrading import StockTradingEnv
 from env.env_portfolio import StockPortfolioEnv
 from env.env_supplier import SupplierSelectionEnv
 from models import DRLAgent
@@ -34,24 +33,6 @@ def train_supplier_selection(dataset, K, strategy):
         data_name=dataset,
     ).fetch_data_SSOA()
     
-    # df_train = df.pivot_table(index = ['data_id','period_id','supplier'])
-    # df_test = df_test.pivot_table(index = ['data_id','period_id','supplier'])
-
-    # print("==============Start Feature Engineering===========")
-    # fe = FeatureEngineer(
-    #     use_technical_indicator=False,
-    #     tech_indicator_list=config.TECHNICAL_INDICATORS_LIST,
-    #     use_turbulence=False,
-    #     user_defined_feature=False,
-    # )
-
-    # df = fe.preprocess_data(df)
-
-    # add covariance matrix as states
-    # df=df.sort_values(['Week_ID','tic'],ignore_index=True)
-    # df.index = df.Week_ID.factorize()[0]
-    # return_list, price_list = [], []
-    # change the position of quantity and price
     quan_price = ['MaxQuantity1', 'Price1']
     target_columns = ['GreenW', 'GeneralW', 'MinQuantity1', 'Price0', 'MaxQuantity0', 'CCCap', 'SP', 'CF', 'MaxQuantity1', 'Price1']
     scaler = StandardScaler()
@@ -113,26 +94,6 @@ def train_supplier_selection(dataset, K, strategy):
             bool_terminal.append(j == period_id[-1])
         # id_list.extend(period_id)
     test_dataframe = pd.DataFrame({'terminal':bool_terminal, 'supplier_num': supplier_list, 'feature':feature_list, 'price': price_list, 'quantity': quantity_list})
-    # look back is ten week
-    # lookback=9
-    # for i in range(lookback,len(df.index.unique())-1):
-    #   data_lookback = df.loc[i-lookback:i,:]
-    #   index_lookback = indexing_data.loc[i-lookback:i,:]
-    #   price_lookback=data_lookback.pivot_table(index = 'Week_ID',columns = 'tic', values = 'Close')
-    #   price_list.append(price_lookback.pct_change().fillna(method='backfill').values)    # price_list shape (lookback, stock_num)
-    #   return_lookback = df.pivot_table(index = 'Week_ID',columns = 'tic', values = 'Close').pct_change().dropna()
-    #   return_list.append(return_lookback.values)
-
-    # df_fuse = pd.DataFrame({'Week_ID':df.Week_ID.unique()[lookback:-1],'price_list':price_list,'return_list':return_list})
-    # df = df.merge(df_fuse, on='Week_ID')
-    # df = df.sort_values(['Week_ID','tic']).reset_index(drop=True)
-
-    # truth_indexing = indexing_data['Indexing'].pct_change().dropna()
-    # indexing_data = indexing_data['Indexing'].pct_change().dropna().iloc[lookback:]
-    
-
-    # Training & Trading data split
-    # train, trade = data_split(df, indexing_data, lookback)
 
     # calculate state action space
     # stock_dimension = len(train.tic.unique())
@@ -191,14 +152,3 @@ def train_supplier_selection(dataset, K, strategy):
     # )
     # df_actions.to_csv("./" + config.RESULTS_DIR + "/df_actions_" + dataset + ".csv")
     # df_error.to_csv("./" + config.RESULTS_DIR + "/df_error_" + dataset + ".csv")
-
-    # print("==============Get Backtest Results===========")
- 
-    # from pyfolio import timeseries
-    # DRL_strat = convert_daily_return_to_pyfolio_ts(df_account_value)
-    # perf_func = timeseries.perf_stats 
-    # perf_stats_all = perf_func( returns=DRL_strat, 
-    #                           factor_returns=DRL_strat, 
-    #                             positions=None, transactions=None, turnover_denom="AGB")
-    # print("==============DRL Strategy Stats===========")
-    # print(perf_stats_all)
