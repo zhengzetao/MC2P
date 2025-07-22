@@ -3,7 +3,7 @@ from typing import Any, Dict, List, Optional, Tuple, Type, TypeVar, Union
 import gym
 import time
 import torch
-import ipdb
+import pdb
 import numpy as np
 import pandas as pd
 import torch as th
@@ -12,7 +12,6 @@ from torch.nn import functional as F
 import matplotlib.pyplot as plt
 from DQN.policy import DQNPolicy
 # from models import DRLAgent
-# from stable_baselines3.common.buffers import ReplayBuffer
 from tools.buffers import ReplayBuffer
 from stable_baselines3.common.off_policy_algorithm import OffPolicyAlgorithm
 from stable_baselines3.common.policies import BasePolicy
@@ -24,8 +23,6 @@ from stable_baselines3.common import utils
 from stable_baselines3.common.preprocessing import maybe_transpose
 from stable_baselines3.common.type_aliases import GymEnv, MaybeCallback, Schedule, RolloutReturn
 from stable_baselines3.common.utils import get_linear_fn, get_parameters_by_name, is_vectorized_observation, polyak_update, get_schedule_fn, get_device, update_learning_rate
-# from stable_baselines3.common.utils import explained_variance, set_random_seed, get_device, update_learning_rate, get_schedule_fn, obs_as_tensor, safe_mean
-# from stable_baselines3.dqn.policies import CnnPolicy, DQNPolicy, MlpPolicy, MultiInputPolicy
 
 DQNSelf = TypeVar("DQNSelf", bound="DQN")
 
@@ -86,7 +83,7 @@ class DQN():
         env: Union[GymEnv, str],
         learning_rate: Union[float, Schedule] = 1e-4,
         buffer_size: int = 1_000_000,  # 1e6
-        learning_starts: int = 50000,
+        learning_starts: int = 500,
         batch_size: int = 32,
         selected_num: int = 10,
         strategy: str="concat",
@@ -162,6 +159,7 @@ class DQN():
         self.exploration_schedule = None
         self.action_noise = None
         self._last_obs = None
+        self.data_terminal = False
         self._custom_logger = False
         self.tensorboard_log = tensorboard_log
         self.learning_starts = learning_starts
@@ -291,7 +289,7 @@ class DQN():
                 target_q_values = replay_data.rewards + (1 - replay_data.dones) * self.gamma * next_q_values
 
             # Get current Q-values estimates
-            
+            # pdb.set_trace()
             current_q_values = self.q_net(replay_data.observations)
 
             # Retrieve the q-values for the actions from the replay buffer
@@ -301,7 +299,7 @@ class DQN():
             # Compute Huber loss (less sensitive to outliers)
             loss = F.smooth_l1_loss(current_q_values, target_q_values)
             losses.append(loss.item())
-
+            # print('losses',current_q_values[0,:1], target_q_values[0,:1],replay_data.rewards[0],losses)
             # Optimize the policy
             self.policy.optimizer.zero_grad()
             loss.backward()
@@ -342,9 +340,10 @@ class DQN():
             # else:
             #     action = np.array(self.action_space.sample())
             unscaled_action = []
+            legal_action = (observation[0] != 0).any(axis=0).sum().item()
             while len(unscaled_action) < self.selected_num: 
                 sample = self.action_space.sample()
-                if sample not in unscaled_action: unscaled_action.append(sample) 
+                if sample not in unscaled_action and sample < legal_action: unscaled_action.append(sample) 
             # unscaled_action = np.array([unscaled_action])
             action = np.array([unscaled_action])
         else:
@@ -357,7 +356,7 @@ class DQN():
         total_timesteps: int,
         log_interval: int = 4,
         eval_env: Optional[GymEnv] = None, # for eval in the future
-        eval_freq: int = 5,
+        eval_freq: int = 1000,
         # n_eval_episodes: int = 5,
         tb_log_name: str = "DQN",
         model_save_path: Optional[str] = None,
@@ -398,8 +397,9 @@ class DQN():
                 # Special case when the user passes `gradient_steps=0`
                 if gradient_steps > 0:
                     self.train(batch_size=self.batch_size, gradient_steps=gradient_steps)
-
-            if self.num_timesteps > 100000 and self.num_timesteps % eval_freq == 0:
+                # for name, param in list(self.policy.named_parameters())[:1]: print(name,param)
+                # pdb.set_trace()
+            if self.num_timesteps > 10000 and self.num_timesteps % eval_freq == 0:
                 test_env, test_state = eval_env.get_sb_env()
                 # error_memory = []
                 episode_start = 1
@@ -414,12 +414,12 @@ class DQN():
                 error = np.linalg.norm(error_memory[0]["daily_return"].values)/len(error_memory[0]["daily_return"].values)
                 if error < minimal_error_perf: 
                     minimal_error_perf = error
-                    error_list = error_memory[0]["daily_return"].values
+                    # error_list = error_memory[0]["daily_return"].values
                     print("better tracking_error:{}".format(minimal_error_perf))
                     self.save(model_save_path)
         # Plot the episode reward
-        print("best tracking_error:{}".format(minimal_error_perf))
-        self.perf_metric(error_list)
+        # print("best error:{}".format(minimal_error_perf))
+        # self.perf_metric(error_list)
         plt.plot(range(len(self.Reward_total)), self.Reward_total, "r")
         pd_reward_total = pd.DataFrame(data=self.Reward_total)
         pd_reward_total.to_csv("results/{}_{}_{}.episode_reward.csv".format(times.tm_hour,times.tm_min,times.tm_sec))
@@ -550,6 +550,9 @@ class DQN():
             # Rescale and perform action
             new_obs, rewards, dones, infos = env.step(actions)
 
+            if infos and infos[0].get("data_terminal") is True: 
+                dones = [infos[0].get("data_terminal")]
+
             if dones:
                 self.Reward_total.append(sum(self.reward_episode))
                 self.reward_episode = []
@@ -623,18 +626,18 @@ class DQN():
         # if self.num_timesteps < learning_starts and not (self.use_sde and self.use_sde_at_warmup):
         if self.num_timesteps < learning_starts:
             # Warmup phase
-            # unscaled_action = np.array([self.action_space.sample() for _ in range(n_envs)])
+            # if self._last_obs not exist, legal_action default values is 5
             unscaled_action = []
+            legal_action = (self._last_obs[0] != 0).any(axis=0).sum().item() if self._last_obs is not None else 5
             while len(unscaled_action) < self.selected_num: 
                 sample = self.action_space.sample()
-                if sample not in unscaled_action: unscaled_action.append(sample) 
+                if sample not in unscaled_action and sample < legal_action: unscaled_action.append(sample) 
             unscaled_action = np.array([unscaled_action])
         else:
             # Note: when using continuous actions,
             # we assume that the policy uses tanh to scale the action
             # We use non-deterministic action in the case of SAC, for TD3, it does not matter
             unscaled_action, _ = self.predict(self._last_obs, deterministic=False)
-
         # Rescale the action from [low, high] to [-1, 1]
         if isinstance(self.action_space, gym.spaces.Box):
             scaled_action = self.policy.scale_action(unscaled_action)
@@ -702,17 +705,21 @@ class DQN():
                     # VecNormalize normalizes the terminal observation
                     if self._vec_normalize_env is not None:
                         next_obs[i] = self._vec_normalize_env.unnormalize_obs(next_obs[i, :])
-
-        replay_buffer.add(
-            self._last_original_obs,
-            next_obs,
-            buffer_action,
-            reward_,
-            dones,
-            infos,
-        )
+        
+        # store the data in portfolio env  or at terminal of data in supplier env
+        # the data at the end of data terminal in supplier env will be discarded
+        if len(infos) == 0 or self.data_terminal is False:
+            replay_buffer.add(
+                self._last_original_obs,
+                next_obs,
+                buffer_action,
+                reward_,
+                dones,
+                infos,
+            )
 
         self._last_obs = new_obs
+        self.data_terminal = bool(infos[0].get("data_terminal"))
         # Save the unnormalized observation
         if self._vec_normalize_env is not None:
             self._last_original_obs = new_obs_
@@ -781,27 +788,27 @@ class DQN():
     def load(self, path: str='./trained_models/SP500/') -> None: 
         self.policy.load_state_dict(torch.load(path + f"best_policy.pth"))
 
-    def perf_metric(self, daily_returns):
-        # Calculate Mean Daily Return
-        mean_daily_return = np.mean(daily_returns)
+    # def perf_metric(self, daily_returns):
+    #     # Calculate Mean Daily Return
+    #     mean_daily_return = np.mean(daily_returns)
 
-        # Calculate Standard Deviation (Risk)
-        risk = np.std(daily_returns)
+    #     # Calculate Standard Deviation (Risk)
+    #     risk = np.std(daily_returns)
 
-        # Calculate Annualized Sharpe Ratio (assuming 252 trading days in a year)
-        annualized_sharpe_ratio = np.sqrt(252) * (mean_daily_return / risk)
+    #     # Calculate Annualized Sharpe Ratio (assuming 252 trading days in a year)
+    #     annualized_sharpe_ratio = np.sqrt(252) * (mean_daily_return / risk)
 
-        # Create a DataFrame to work with drawdown calculations
-        df = pd.DataFrame({'Returns': daily_returns})
+    #     # Create a DataFrame to work with drawdown calculations
+    #     df = pd.DataFrame({'Returns': daily_returns})
 
-        # Calculate cumulative returns
-        df['Cumulative Returns'] = (1 + df['Returns']).cumprod()
+    #     # Calculate cumulative returns
+    #     df['Cumulative Returns'] = (1 + df['Returns']).cumprod()
 
-        # Calculate maximum drawdown
-        df['Peak'] = df['Cumulative Returns'].cummax()
-        df['Drawdown'] = df['Cumulative Returns'] / df['Peak'] - 1
-        max_drawdown = df['Drawdown'].min()
+    #     # Calculate maximum drawdown
+    #     df['Peak'] = df['Cumulative Returns'].cummax()
+    #     df['Drawdown'] = df['Cumulative Returns'] / df['Peak'] - 1
+    #     max_drawdown = df['Drawdown'].min()
 
-        # print("Mean Daily Return:", mean_daily_return)
-        print("Annualized Sharpe Ratio:", annualized_sharpe_ratio)
-        print("Maximum Drawdown:", max_drawdown)
+    #     # print("Mean Daily Return:", mean_daily_return)
+    #     print("Annualized Sharpe Ratio:", annualized_sharpe_ratio)
+    #     print("Maximum Drawdown:", max_drawdown)

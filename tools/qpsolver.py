@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 from cvxopt import matrix
 from cvxopt import solvers
-
+import pdb
 # Non verbose
 solvers.options['show_progress'] = False
 
@@ -91,3 +91,40 @@ class qp_solver:
         sol['cost value'] = cost_value
         
         return sol
+
+def qp_SSOA_solver(prices, max_quantities, demand, lambda_weight=0.5):
+    """
+    Solve the order allocation problem with two objectives:
+    1. minimize gap between total purchase and demand
+    2. minimize total cost
+    :param prices: list or np.array of prices (length M)
+    :param max_quantities: list or np.array of maximum quantity each supplier can supply (length M)
+    :param demand: total demand D
+    :param lambda_weight: weight for gap penalty term (between 0 and 1)
+    :return: solution vector x (amount purchased from each supplier)
+    """
+    prices = np.array(prices)
+    max_quantities = np.array(max_quantities)
+    M = len(prices)
+
+    # === Construct QP matrices ===
+
+    # Objective: lambda * (sum x - D)^2 + (1 - lambda) * p^T x
+    # (sum x - D)^2 = x^T 1 1^T x - 2D 1^T x + D^2
+    Q = 2 * lambda_weight * np.ones((M, M))  # outer product of 1s
+    q = (1 - lambda_weight) * prices - 2 * lambda_weight * demand * np.ones(M)
+    # Constraints:
+    # 0 <= x <= max_quantities
+    G = np.vstack([-np.eye(M), np.eye(M)])
+    h = np.hstack([np.zeros(M), max_quantities])
+
+    # Convert to cvxopt format
+    Q = matrix(Q)
+    q = matrix(q)
+    G = matrix(G)
+    h = matrix(h)
+
+    sol = solvers.qp(Q, q, G, h)
+    x_opt = np.array(sol['x']).flatten()
+    return x_opt
+

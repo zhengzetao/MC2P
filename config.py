@@ -46,7 +46,7 @@ DQN_PARAMS = {
     "batch_size": 64, 
     "buffer_size": 100000, 
     "learning_rate": 0.0001,
-    "learning_starts": 1000,
+    "learning_starts": 10000,
 }
 PPO_PARAMS = {
     "n_steps": 2048,

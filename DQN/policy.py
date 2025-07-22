@@ -1,5 +1,5 @@
 from typing import Any, Dict, List, Optional, Type, Union
-
+import pdb
 import gym
 import torch
 import torch as th
@@ -65,7 +65,7 @@ class QNetwork(nn.Module):
         super(QNetwork, self).__init__()
 
         if net_arch is None:
-            net_arch = [256, 128, 64]
+            net_arch = [64,64]
 
         self.net_arch = net_arch
         self.activation_fn = activation_fn
@@ -164,6 +164,34 @@ class QNetwork(nn.Module):
             index_network = create_mlp(int(features_dim*action_dim), action_dim, net_arch, activation_fn)
             self.fuse_network = nn.Sequential(*fuse_network)
             self.index_network = nn.Sequential(*index_network)
+        
+        if self.strategy == "interactive":
+            print("execute the interactive strategy")
+            # encoder = LSHSelfAttention(dim = features_dim, heads = 2, bucket_size = 32, n_hashes = 6, causal = False)
+            encoder = LSHAttention(bucket_size = 4, n_hashes = 2)
+            # num_head = 2
+            # num_layer = 2
+            input_dim = self.observation_space.shape[0]
+            # dim_feedforward = 64
+            # transformer_args = {
+            # "num_layers": num_layer,
+            # "input_dim": self.observation_space.shape[0],
+            # "dim_feedforward": dim_feedforward,
+            # "num_heads": num_head,
+            # "dropout": 0.5,
+            # }
+            self.proj = nn.Sequential(
+                nn.Linear(input_dim, 64),
+                nn.ReLU(),
+                nn.Linear(64, features_dim),
+                nn.ReLU(),
+            )
+            # self.stock_RNN = RNN(input_shape=1, hidden_dim=features_dim)
+            self.encoder = Autopadder(encoder)
+            self.features_extractor = nn.Flatten()
+            # self.scale_dot_att = SoftAttention(features_dim)
+            fuse_network = create_mlp(features_dim*action_dim, action_dim, net_arch, activation_fn)
+            self.fuse_network = nn.Sequential(*fuse_network)
 
     def extract_features(self, obs):
         if self.strategy == "concat":
@@ -246,6 +274,21 @@ class QNetwork(nn.Module):
             stock_score = self.fuse_network(flatten_stock_feat1)
             index_score = self.index_network(flatten_stock_feat2)
             features =  0.7*index_score +0.3*stock_score 
+        
+        if self.strategy == "interactive":
+            obs = obs.permute(0, 2, 1)
+            stock_data = obs
+            lookback = obs.shape[2]
+            batch_size = obs.shape[0]
+            stock_num = stock_data.shape[1]
+            # stock_rnn_hidden = self.stock_RNN(stock_data.reshape(batch_size*stock_num, lookback))
+            stock_rnn_hidden = self.proj(stock_data.reshape(batch_size*stock_num, lookback))
+            # stock_rnn_hidden = stock_rnn_hidden[:,-1,:].view(batch_size*stock_num, self.features_dim)
+            stock_data = stock_rnn_hidden.view(batch_size, stock_num, self.features_dim)
+            stock_reform_hidden = self.encoder(stock_data, stock_data)
+            flatten_stock_feat1 = self.features_extractor(stock_data) #stocks feat with relation among assets
+            stock_score = self.fuse_network(flatten_stock_feat1)
+            features =  stock_score 
 
         return features
 
@@ -258,14 +301,17 @@ class QNetwork(nn.Module):
         """
         if self.strategy == "concat":
             return self.q_net(self.extract_features(obs))
-        if self.strategy == "solo" or self.strategy =="inter" or self.strategy=="two":
+        if self.strategy == "solo" or self.strategy =="interactive" or self.strategy=="two":
             return self.extract_features(obs)
 
     def _predict(self, observation: th.Tensor, deterministic: bool = True) -> th.Tensor:
         q_values = self(observation)
+        bool_mask = ~(observation[0] == 0).all(dim=0)
+        q_values = q_values.masked_fill(~bool_mask, float('-inf'))
         # Greedy action
         k_actions = q_values.argsort(dim=1, descending=True)[:,:self.selected_num]
         # action = q_values.argmax(dim=1).reshape(-1)
+        # print('neural network output',k_actions)
         return k_actions
 
     # def _get_constructor_parameters(self) -> Dict[str, Any]:

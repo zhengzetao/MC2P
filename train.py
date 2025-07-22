@@ -26,9 +26,9 @@ def train_stock_trading(dataset, K, strategy):
 
     print("==============Start Fetching Data===========")
     df, indexing_data = DataLoader(
-        portfolio_name=dataset,
-        start_date=config.START_DATE,
-        end_date=config.END_DATE,
+        data_name=dataset,
+        # start_date=config.START_DATE,
+        # end_date=config.END_DATE,
         # ticker_list=Ticker_list,
     ).fetch_data()
 
@@ -68,8 +68,6 @@ def train_stock_trading(dataset, K, strategy):
     
 
     # Training & Trading data split
-    # train = data_split(df, config.START_DATE, config.START_TRADE_DATE)
-    # trade = data_split(df, config.START_TRADE_DATE, config.END_DATE)
     train, trade = data_split(df, indexing_data, lookback)
 
 
@@ -109,7 +107,7 @@ def train_stock_trading(dataset, K, strategy):
     # )
 
     ################ DQN #########################
-    model_dqn = agent.get_model("dqn",K, strategy)
+    model_dqn = agent.get_model("dqn", K, strategy)
     trained_dqn = agent.train_model(
         model=model_dqn, tb_log_name="dqn", total_timesteps=150000, eval_env = e_trade_gym, model_save_path=TRAINED_MODEL_PATH
     )

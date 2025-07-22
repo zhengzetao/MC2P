@@ -207,7 +207,7 @@ def series_decomposition(data, level):
     return np.array(dec_list)
 
 class FeatureEngineer:
-    """Provides methods for preprocessing the stock price data
+    """Provides methods for preprocessing the data
 
     Attributes
     ----------

@@ -17,9 +17,9 @@ def build_parser():
         metavar="MODE",
         default="train",
     )
-    parser.add_argument('--dataset',default='indtrack1', help="indtrack1-7")
-    parser.add_argument('--K',default=10, help="10,50,90")
-    parser.add_argument('--strategy',default='concat', help="concat,solo")
+    parser.add_argument('--dataset',default='indtrack1', help="indtrack1-7, test357,535,560")
+    parser.add_argument('--K',default=4, help="10,50,90")
+    parser.add_argument('--strategy',default='interactive', help="concat,solo")
     return parser
 
 
@@ -39,6 +39,9 @@ def main():
         if options.dataset == 'SP500':
             import train_SP500
             train_SP500.train_stock_trading(options.dataset,options.K,options.strategy)
+        if options.dataset.startswith('test'):
+            import train_SSOA
+            train_SSOA.train_supplier_selection(options.dataset,options.K,options.strategy)
         else:
             import train
             train.train_stock_trading(options.dataset,options.K,options.strategy)

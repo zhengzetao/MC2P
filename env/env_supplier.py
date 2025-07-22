@@ -6,19 +6,19 @@ import heapq
 import math as mh
 from gym import spaces
 import matplotlib
-import ipdb
+import pdb
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from stable_baselines3.common.vec_env import DummyVecEnv
-from tools.qpsolver import qp_solver
+from tools.qpsolver import qp_solver, qp_SSOA_solver
 
 from warnings import simplefilter
 simplefilter(action='ignore', category=FutureWarning)
 simplefilter(action='ignore', category=UserWarning)
 
 
-class StockPortfolioEnv(gym.Env):
+class SupplierSelectionEnv(gym.Env):
     """A single stock trading environment for OpenAI gym
 
     Attributes
@@ -72,34 +72,34 @@ class StockPortfolioEnv(gym.Env):
     def __init__(
         self,
         df,
-        indexing,
-        stock_dim,
-        hmax,
-        initial_amount,
-        transaction_cost_pct,
+        demanding,
+        supplier_num,
+        # hmax,
+        initial_shortage,
+        # transaction_cost_pct,
         reward_scaling,
         state_space,
         action_space,
-        lookback,
-        tech_indicator_list,
-        turbulence_threshold=None,
+        # lookback,
+        # tech_indicator_list,
+        # turbulence_threshold=None,
         # lookback=252,
         day=0,
     ):
         # super(StockEnv, self).__init__()
         # money = 10 , scope = 1
         self.day = day
-        self.lookback = lookback
+        # self.lookback = lookback
         self.df = df
-        self.indexing = indexing
-        self.stock_dim = stock_dim
-        self.hmax = hmax
-        self.initial_amount = initial_amount
-        self.transaction_cost_pct = transaction_cost_pct
+        self.demanding = demanding
+        self.supplier_num = supplier_num
+        # self.hmax = hmax
+        self.initial_shortage = initial_shortage
+        # self.transaction_cost_pct = transaction_cost_pct
         self.reward_scaling = reward_scaling
-        # self.state_space = state_space
+        self.state_space = state_space
         self.action_space = action_space
-        self.tech_indicator_list = tech_indicator_list
+        # self.tech_indicator_list = tech_indicator_list
         # self.agent_num = agent_num
 
         # action_space normalization and shape is self.stock_dim
@@ -109,165 +109,156 @@ class StockPortfolioEnv(gym.Env):
         self.observation_space = spaces.Box(
             low=-np.inf,
             high=np.inf,
-            shape=(self.lookback, self.stock_dim-1)
+            shape=(self.state_space, self.supplier_num)
         )
 
 
         # load data from a pandas dataframe
         self.data = self.df.loc[self.day, :]
-        self.state = np.array(self.data['price_list'].values[0][:,1:])
+        self.state = np.array(self.data['feature']).T
+        # self.last_period_id = 0
         # self.index_value = np.array(self.data['index_list'].values[0])
-        self.index_value = self.state[:,0]
+        self.demand_value = self.demanding[self.day]
+        self.price = self.data['price']
+        self.quantity = self.data['quantity']
         self.terminal = False
-        self.turbulence_threshold = turbulence_threshold
+        # self.turbulence_threshold = turbulence_threshold
         # initalize state: inital portfolio return + individual stock return + individual weights
-        self.portfolio_value = self.initial_amount
-        self.tracking_error = [0]
+        self.shortage = self.initial_shortage
+        self.shortage_gap = [0]
 
         # memorize portfolio value each step
-        self.asset_memory = [self.initial_amount]
+        self.cost = [0]
         # asset growth ratio: new_portfolio_value / initial_amount
-        self.asset_ratio = [1]
+        # self.asset_ratio = [1]
         # memorize portfolio return each step
-        self.portfolio_return_memory = [0]
-        self.truth_portfolio_memory = [0]
-        self.asset_memory = [range(10)]
+        self.purchase_quantity_memory = [0]
+        self.truth_demand_memory = [0]
+        # self.asset_memory = [range(10)]
 
-        self.date_memory = [self.data.Week_ID.values[0]]
+        self.date_memory = [self.data.index.values[0]]
 
     def step(self, actions):
-
         self.terminal = self.day >= len(self.df.index.unique()) - 1
-
+        # print(self.day, self.data['terminal'],actions)
         if self.terminal:
-            df = pd.DataFrame(self.portfolio_return_memory)
+            df = pd.DataFrame(self.purchase_quantity_memory)
             df.columns = ["daily_return"]
             plt.plot(df.daily_return.cumsum(), "r")
+            plt.plot(self.purchase_quantity_memory, "r")
             plt.savefig("results/cumulative_reward.png")
-            plt.close()
-
-            plt.plot(self.portfolio_return_memory, "r")
             plt.savefig("results/rewards.png")
             plt.close()
 
+            # plt.plot(self.portfolio_return_memory, "r")
+            # plt.savefig("results/rewards.png")
+            # plt.close()
             print("=================================")
-            print("begin_total_asset:{}".format(self.asset_memory[0]))
-            print("end_total_asset:{}".format(self.portfolio_value))
-            # print("tracking error:{}".format(self.tracking_error[:10]))
-            print("tracking_error:{}".format(np.linalg.norm(self.tracking_error)/len(self.tracking_error)))
-
-            df_daily_return = pd.DataFrame(self.portfolio_return_memory)
-            df_daily_return.columns = ["daily_return"]
-            if df_daily_return["daily_return"].std() != 0:
-                sharpe = (
-                    (252 ** 0.5)
-                    * df_daily_return["daily_return"].mean()
-                    / df_daily_return["daily_return"].std()
-                )
-                print("Sharpe: ", sharpe)
-            # print("=================================")
-            # Calculate the turnover between consecutive time points
+            # print(self.shortage_gap[:5])
+            # print(self.purchase_quantity_memory[:5])
+            # print(self.truth_demand_memory[:5])
+            # print(self.purchase_quantity_memory,self.cost,self.demand_value,len(self.purchase_quantity_memory),len(self.cost))
+            print("avevrage cost of decision / period:{}".format(np.log10(np.mean(self.cost))))
+            print("shortage gap:{}".format(np.log10(np.sum(self.shortage_gap)/len(self.shortage_gap))))
+            print("average unit price:{}".format(np.sum(self.cost) / np.sum(self.purchase_quantity_memory)))
+            # df_daily_return = pd.DataFrame(self.portfolio_return_memory)
+            # df_daily_return.columns = ["daily_return"]
+            # if df_daily_return["daily_return"].std() != 0:
+            #     sharpe = (
+            #         (252 ** 0.5)
+            #         * df_daily_return["daily_return"].mean()
+            #         / df_daily_return["daily_return"].std()
+            #     )
+            #     print("Sharpe: ", sharpe)
             
-            turnover_values = np.sum(np.abs(np.diff(self.weights_memory[1:], axis=0)), axis=1) / np.array(self.weights_memory[1:]).shape[1]
-            # print(turnover_values)
-            # exit()
+            # turnover_values = np.sum(np.abs(np.diff(self.weights_memory[1:], axis=0)), axis=1) / np.array(self.weights_memory[1:]).shape[1]
+
             # Calculate the average turnover rate
-            average_turnover = np.mean(turnover_values)
-            print("Turnover: ", average_turnover)
+            # average_turnover = np.mean(turnover_values)
+            # print("Turnover: ", average_turnover)
             print("=================================")
 
-            return self.state, self.reward, self.terminal, {}
+            return self.state, self.reward, self.terminal, {'data_terminal':True}
 
         else:
-            # weights = self.softmax_normalization(actions)
-            # self.actions_memory.append(weights)
-            last_day_memory = self.data
-            # calculate the tracking error using qp
-            # qp_input = pd.DataFrame(self.state[:,actions]).pct_change().dropna()
-            # index_value = pd.DataFrame(self.index_value).pct_change().dropna()
-            # qp_input = pd.DataFrame(self.state[:,actions+1])
-            qp_input = pd.DataFrame(self.state[:,actions])
-            index_value = pd.DataFrame(self.index_value)
-            name_list = ['stock'+str(i) for i in range(len(actions))]
-            qp_input.columns = name_list
-            # qp_input['index'] = self.index_value
-            qp_input['index'] = index_value
-            qp = qp_solver(qp_input)
-            sol = qp.solve()
+            try:
+                sol = qp_SSOA_solver(self.price[actions], self.quantity[actions], self.demand_value, lambda_weight=0.9)
+            except IndexError:
+                pdb.set_trace()
             # print('Exact solution with all time-series')
-            # print(sol['x'])
-            # exit()
-            weights = np.zeros(self.stock_dim)
-            for k, v in enumerate(actions): weights[v] = sol['x'][k]
-            # self.actions_memory.append(np.int64(weights>0))
-            self.actions_memory.append(actions)
-            self.weights_memory.append(weights)
-            # print(actions, sol['x'],weights)
-            
+            # print(sol)
+            # weights = np.zeros(self.supplier_num)
+            # for k, v in enumerate(actions): weights[v] = sol['x'][k]
+            # self.actions_memory.append(actions)
+            # self.weights_memory.append(weights)
+            # data_terminal = 0 if self.current_period_id > self.last_period_id else 1
+            data_terminal = np.array(self.data['terminal'])
             # calculate portfolio return
             # individual stocks' return * weight
-            Week_ID = self.data.Week_ID.values[0]
-            if self.stock_dim == 430: # for SP500 dataset
-                portfolio_return =  np.matmul(self.data.loc[self.day].return_list.values[0], weights)
-                truth_indexing = self.indexing.loc[self.day].index_list
-            else:
-                portfolio_return = sum(
-                    self.data['return_list'].values[0][Week_ID,:] * weights
-                )
-                truth_indexing = self.indexing.values[Week_ID]
+            # Week_ID = self.data.index.values[0]
+            total_quantity = sum(sol)
+            truth_demanding = self.demand_value
 
             # update portfolio value
-            # print(self.data.loc[self.day].Date.values[0])
-            # exit()
-            self.daily_return_memory.append(portfolio_return)
-            new_portfolio_value = self.portfolio_value * (1 + np.sum(portfolio_return))
-            self.portfolio_value = new_portfolio_value if new_portfolio_value > 0 else 0
+            # self.daily_return_memory.append(total_quantity)
+            # new_portfolio_value = self.portfolio_value * (1 + np.sum(total_quantity))
+            # self.portfolio_value = new_portfolio_value if new_portfolio_value > 0 else 0
 
             # save into memory
-            self.portfolio_return_memory.append(np.sum(portfolio_return))
-            self.truth_portfolio_memory.append(np.sum(truth_indexing))
+            self.purchase_quantity_memory.append(total_quantity)
+            self.truth_demand_memory.append(truth_demanding)
             
-            self.asset_memory.append(new_portfolio_value)
+            # self.asset_memory.append(self.demand_value)
             # self.asset_ratio.append(round(new_portfolio_value/self.asset_memory[-2],5))
-            
-            if self.stock_dim == 430:
-                self.tracking_error.extend((truth_indexing - portfolio_return).tolist())
-            else:
-                self.tracking_error.append(truth_indexing - portfolio_return) 
+            # print(truth_demanding,total_quantity)
+            self.shortage_gap.append(truth_demanding - total_quantity) 
 
             # self.tracking_error = [truth_indexing - portfolio_return]
             # jacarrd similarity
-            sim = len(set(self.actions_memory[-1]).intersection(set(self.actions_memory[-2]))) / \
-                  len(set(self.actions_memory[-1]).union(set(self.actions_memory[-2])))
-            gap = np.mean(abs(truth_indexing - portfolio_return)) * 10
-            self.reward = (1 - np.clip(gap,0,1)**(1/5))**(5/1) - (1 - np.clip(sim,0,1)**(1/5))**(5/1)
-
+            # sim = len(set(self.actions_memory[-1]).intersection(set(self.actions_memory[-2]))) / \
+            #       len(set(self.actions_memory[-1]).union(set(self.actions_memory[-2])))
+            # print(self.demand_value, total_quantity)
+            cost = sum(sol * self.price[actions])
+            gap = np.absolute(np.mean(abs(self.demand_value - total_quantity)))
+            self.reward = (1 - np.clip(gap/2000,0,1)**(3/4))**(4/3) + (1 - np.clip(cost/50000,0,1)**(3/4))**(4/3)
+            # self.reward = -np.log(cost + 0.0001) + 13
+            # print(self.reward, self.reward+15,gap, cost)
+            self.cost.append(cost)
             # load next state
             self.day += 1
             self.data = self.df.loc[self.day, :]
-            self.state = np.array(self.data['price_list'].values[0][:,1:])
+            self.state = np.array(self.data['feature']).T
+            self.price = self.data['price']
+            self.quantity = self.data['quantity']
+            # self.last_period_id = self.current_period_id
+            # self.current_period_id = np.array(self.data['period_id'])
             # self.index_value = np.array(self.data['index_list'].values[0])
-            self.index_value = self.state[:,0]
-            self.date_memory.append(self.data.Week_ID.values[0])
+            self.demand_value = self.demanding[self.day]
+            self.date_memory.append(self.data.index.values[0])
 
-        return self.state, self.reward, self.terminal, {}
+        return self.state, self.reward, self.terminal, {'data_terminal':data_terminal}
 
     def reset(self):
-        self.asset_memory = [self.initial_amount]
+        self.asset_memory = [self.initial_shortage]
         self.day = 0
         self.data = self.df.loc[self.day, :]
         # load states
-        self.state = np.array(self.data['price_list'].values[0][:,1:])
-        self.portfolio_value = self.initial_amount
+        self.state = np.array(self.data['feature']).T
+        self.price = self.data['price']
+        self.quantity = self.data['quantity']
+        # self.last_period_id = 0
+        # self.current_period_id = np.array(self.data['period_id'])
+        self.initial_shortage = self.initial_shortage
         self.terminal = False
-        self.portfolio_return_memory = [0]
-        self.truth_portfolio_memory = [0]
+        self.purchase_quantity_memory = [0]
+        self.truth_demand_memory = [0]
+        self.cost = [0]
         # self.actions_memory = [[1 / self.stock_dim] * self.stock_dim]
         self.actions_memory = [range(10)]
-        self.weights_memory = [range(self.stock_dim)]
+        self.weights_memory = [range(self.supplier_num)]
         self.daily_return_memory = [range(10)]
-        self.date_memory = [self.data.Week_ID.values[0]]
-        self.tracking_error = [0]
+        self.date_memory = [self.data.index.values[0]]
+        self.shortage_gap = [0]
         return self.state
 
     def render(self, mode="human"):
@@ -289,7 +280,7 @@ class StockPortfolioEnv(gym.Env):
 
     def save_asset_memory(self):
         date_list = self.date_memory
-        portfolio_return = self.portfolio_return_memory
+        portfolio_return = self.purchase_quantity_memory
         df_account_value = pd.DataFrame(
             {"date": date_list, "daily_return": portfolio_return}
         )
@@ -297,7 +288,7 @@ class StockPortfolioEnv(gym.Env):
 
     def save_truth_asset_memory(self):
         date_list = self.date_memory
-        portfolio_return = self.truth_portfolio_memory
+        portfolio_return = self.truth_demand_memory
         df_truth_value = pd.DataFrame(
             {"date": date_list, "daily_return": portfolio_return}
         )
@@ -305,9 +296,9 @@ class StockPortfolioEnv(gym.Env):
 
     def save_tracking_error_memory(self):
         date_list = self.date_memory
-        tracking_error = self.tracking_error
+        shortage_gap = self.shortage_gap
         df_error_value = pd.DataFrame(
-            {"date": date_list, "daily_return": tracking_error}
+            {"date": date_list, "daily_return": shortage_gap}
         )
         return df_error_value
 

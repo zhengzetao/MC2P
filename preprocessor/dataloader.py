@@ -4,21 +4,10 @@ Yahoo Finance API
 import os
 import pandas as pd
 import yfinance as yf
-
+import pdb
 
 class DataLoader:
-    """Provides methods for retrieving daily stock data from
-    Yahoo Finance API
-
-    Attributes
-    ----------
-        start_date : str
-            start date of the data (modified from config.py)
-        end_date : str
-            end date of the data (modified from config.py)
-        ticker_list : list
-            a list of stock tickers (modified from config.py)
-
+    """
     Methods
     -------
     fetch_data()
@@ -26,11 +15,11 @@ class DataLoader:
 
     """
 
-    def __init__(self, portfolio_name: str, start_date: str, end_date: str):
+    def __init__(self, data_name: str):
 
-        self.portfolio_name = portfolio_name
-        self.start_date = start_date
-        self.end_date = end_date
+        self.data_name = data_name
+        # self.start_date = start_date
+        # self.end_date = end_date
         # self.ticker_list = ticker_list
 
     def fetch_data(self) -> pd.DataFrame:
@@ -46,17 +35,17 @@ class DataLoader:
         """
         # Download and save the data in a pandas DataFrame:
         data_df = pd.DataFrame()
-        if self.portfolio_name == 'SP500':
-            portfolio_save_path = "./datasets" + '/' + self.portfolio_name
+        if self.data_name == 'SP500':
+            portfolio_save_path = "./datasets" + '/' + self.data_name
             index_file_path = portfolio_save_path + '/^GSPC.csv'
         else:
-            portfolio_save_path = "./datasets/ORL-data/" + self.portfolio_name + '/'
+            portfolio_save_path = "./datasets/ORL-data/" + self.data_name + '/'
             index_file_path = portfolio_save_path  + '1.csv'
         if os.path.exists(portfolio_save_path):
             # standard_file = pd.read_csv(portfolio_save_path + '/' + self.ticker_list[0] + '.csv',index_col=False)
             # standard_date = pd.to_datetime(standard_file['Date'], errors='coerce')
             ticker_list = os.listdir(portfolio_save_path)
-            # ticker_list.remove('^GSPC.csv') if self.portfolio_name == 'SP500' else ticker_list.remove('1.csv')
+            # ticker_list.remove('^GSPC.csv') if self.data_name == 'SP500' else ticker_list.remove('1.csv')
             for tic in ticker_list:
                 temp_df = pd.read_csv(portfolio_save_path + '/' + tic,index_col=False)
                 temp_df["tic"] = tic.split('.')[0]
@@ -89,7 +78,7 @@ class DataLoader:
         """
         # Download and save the data in a pandas DataFrame:
         data_df = pd.DataFrame()
-        portfolio_save_path = "./datasets/" + self.portfolio_name 
+        portfolio_save_path = "./datasets/" + self.data_name 
         index_file_path = portfolio_save_path + '/0.csv'
         if os.path.exists(portfolio_save_path):
             ticker_list = os.listdir(portfolio_save_path)
@@ -156,6 +145,62 @@ class DataLoader:
         
         return data_df, indexing
 
+    def fetch_data_SSOA(self) -> pd.DataFrame:
+        """Fetches SSOA data 
+        Parameters
+        ----------
+
+        Returns
+        -------
+        `pd.DataFrame`
+        """
+        # Download and save the data in a pandas DataFrame:
+        data_df = pd.DataFrame()
+        demand_df = pd.DataFrame()
+        # scaler = StandardScaler()
+        save_path = "./datasets/SSOA-data/" + self.data_name + '/'
+        if os.path.exists(save_path) and self.data_name.startswith('train'):
+            # index_file_path = save_path  + '\[1\]\ data/supplier_1.csv'
+            folder_list = [f for f in os.listdir(save_path) if os.path.isdir(os.path.join(save_path, f))]
+             # 创建folder到data_id的映射
+            folder_to_id = {folder: idx + 1 for idx, folder in enumerate(folder_list)}
+            for folder in folder_list:
+                supplier_list = os.listdir(save_path + '/' + folder)
+                for supplier in supplier_list:
+                    temp_df = pd.read_csv(save_path + '/' + folder + '/' + supplier ,index_col=False)
+                    temp_df["supplier"] = (supplier.split('.')[0]).split('_')[1]
+                    temp_df["supplier"] = temp_df["supplier"].astype(int)
+                    temp_df["data_id"] = folder_to_id[folder]
+                    temp_df["period_id"] = range(1, len(temp_df)+1)
+                    temp_df = temp_df.drop(columns=["Demand","SPP","SupplierSizeInEachPeriod"], errors='ignore')  # errors='ignore' 表示如果列不存在则忽略
+                    data_df = data_df.append(temp_df)
+                demand_temp = pd.read_csv(save_path + '/' + folder + '/' + supplier ,index_col=False)
+                demand_temp = demand_temp[['Demand']]
+                demand_temp["period_id"] = range(1, len(demand_temp)+1)
+                demand_temp["data_id"] = folder_to_id[folder]
+                demand_df = demand_df.append(demand_temp)
+        else:
+            supplier_list = os.listdir(save_path)
+            for supplier in supplier_list:
+                temp_df = pd.read_csv(save_path + '/' + supplier, index_col=False)
+                temp_df["supplier"] = (supplier.split('.')[0]).split('_')[1]
+                temp_df["supplier"] = temp_df["supplier"].astype(int)
+                temp_df["data_id"] = 1 #only load 1 instance
+                temp_df["period_id"] = range(1, len(temp_df)+1)
+                temp_df = temp_df.drop(columns=["Demand","SPP","SupplierSizeInEachPeriod"], errors='ignore')  # errors='ignore' 表示如果列不存在则忽略
+                data_df = data_df.append(temp_df)
+            demand_temp = pd.read_csv(save_path + '/' + supplier ,index_col=False)
+            demand_temp = demand_temp[['Demand']]
+            demand_temp["period_id"] = range(1, len(demand_temp)+1)
+            demand_temp["data_id"] = 1 #only load 1 instance
+            demand_df = demand_df.append(demand_temp)
+
+        print("Shape of DataFrame: ", data_df.shape)
+        data_df = data_df.fillna(0)
+        # data_df = data_df.sort_values(by=['data_id','supplier']).reset_index(drop=True)
+        # demand_df = demand_df.sort_values(by=['data_id']).reset_index(drop=True)
+        return data_df, demand_df
+    
     def select_equal_rows_stock(self, df):
         df_check = df.tic.value_counts()
         df_check = pd.DataFrame(df_check).reset_index()
