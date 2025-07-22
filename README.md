@@ -22,10 +22,22 @@ This repository contains the official implementation of the paper:
    git clone https://github.com/your_username/your_repo_name.git
    cd your_repo_name
 
-## 📦 Running the code
 
-2. Running the code with following command:
-   ```bash
-   python main.py --dataset dataname --K 5
+## 🧪 Running the Code
 
+To run the model on a dataset, use:
+
+```bash
+python main.py --dataset dataname --K 5
+```
+
+* `--dataset`: name of the dataset (e.g., `sit`, `ssoa`)
+* `--K`: cardinality constraint (number of candidates to select)
+
+## 📁 Datasets
+
+Datasets have been placed in datasets folder, including:
+
+* **Sparse Index Tracking (SIT)**: Based on OR-Library index datasets
+* **Supplier Selection and Order Allocation (SSOA)**: Includes real-world green procurement benchmarks
 
