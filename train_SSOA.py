@@ -123,9 +123,6 @@ def train_supplier_selection(dataset, K, strategy):
     agent = DRLAgent(env=e_train_gym)
 
     print("==============Model Training===========")
-    # now = datetime.datetime.now().strftime("%Y%m%d-%Hh%M")
-    # print(time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()))
-
     ################ A2C #########################
     # model_a2c = agent.get_model("a2c",K)
     # trained_a2c = agent.train_model(
