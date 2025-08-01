@@ -1,4 +1,4 @@
-# A Two-stage Approach for Solving Multi-period Cardinality-constraint-based Planning Problem
+# A Two-stage Approach for Solving Multi-period Cardinality-constrained Planning Problems
 
 This repository contains the official implementation of the paper:
 
