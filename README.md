@@ -11,11 +11,9 @@ git clone https://github.com/zhengzetao/MC2P.git
 cd MC2P
 conda create -n mc2p python=3.8 -y
 conda activate mc2p
-python -m pip install "pip==23.0.1" "setuptools==65.5.0" "wheel==0.38.4"
-python -m pip install -r requirements.txt
 ```
 
-Dependency versions are recorded from the existing Python 3.8 experiment environment. Gym 0.21 may require the older packaging tools shown above. Choose a PyTorch build appropriate for your machine if you use CUDA. The code uses the original Gym API; Gymnasium and Stable-Baselines3 2.x are not drop-in replacements. Fresh installation on every platform has not been verified.
+Dependency versions are recorded from the existing Python 3.8 experiment environment. Choose a PyTorch build appropriate for your machine if you use CUDA. The code uses the original Gym API; Gymnasium and Stable-Baselines3 2.x are not drop-in replacements. Fresh installation on every platform has not been verified.
 
 ## Datasets
 
@@ -72,40 +70,4 @@ REDSET scheduling baselines:
 
 ```bash
 python baseline_redset.py --dataset redset_smoke --K 5 --methods random,fcfs,sjf,srpt,greedy_cost_aware
-```
-
-## Configuration and outputs
-
-Shared settings are in `config.py`. Common environment overrides include:
-
-| Variable | Purpose | Default |
-| --- | --- | --- |
-| `SIT_TIMESTEPS` | OR-Library SIT training steps | `50000` |
-| `SIT_SEED` | Optional SIT random seed | Unset |
-| `REDSET_TIMESTEPS` | REDSET training steps | `5000` |
-| `REDSET_SEED` | Optional REDSET random seed | Unset |
-| `REDSET_MAX_RECORDS` | Optional trace record limit | Unset |
-| `REDSET_MAX_PENDING` | Maximum visible pending queries | `64` |
-| `REDSET_EPISODE_LENGTH` | Simulator episode length | `200` |
-| `MC2P_LSH_BUCKET_SIZE` | Interactive policy LSH bucket size | `4` |
-| `MC2P_LSH_N_HASHES` | Interactive policy hash rounds | `2` |
-
-Additional REDSET resource, reward, replay-buffer, and learning settings are read in `train_redset.py`. Legacy comparison switches retain their existing defaults.
-
-Training writes checkpoints to `trained_models/`, TensorBoard logs to `tensorboard_log/`, and evaluation CSV files to `results/`. These outputs are ignored by Git, together with caches, temporary experiments, and machine-specific connection records.
-
-## Code layout
-
-```text
-main.py                      Command-line entry point
-config.py                    Shared configuration
-DQN/                         Q-learning agent and subset-selection policies
-A2C/                         Actor-critic implementation used by the model registry
-env/                         SIT, SSOA, REDSET, and conditional-decoding environments
-preprocessor/                Dataset loading and feature engineering
-tools/                       Neural layers, buffers, distributions, and optimization
-train.py                     OR-Library SIT training
-train_SSOA.py                SSOA training
-train_redset.py               REDSET training
-baseline_redset.py            REDSET scheduling baselines
 ```
