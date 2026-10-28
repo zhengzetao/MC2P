@@ -74,8 +74,6 @@ REDSET scheduling baselines:
 python baseline_redset.py --dataset redset_smoke --K 5 --methods random,fcfs,sjf,srpt,greedy_cost_aware
 ```
 
-The reusable comparison runner is `redset_ablation.py`; run `python redset_ablation.py --help` to see its options.
-
 ## Configuration and outputs
 
 Shared settings are in `config.py`. Common environment overrides include:
@@ -111,14 +109,4 @@ train_SP500.py               S&P 500 training
 train_SSOA.py                SSOA training
 train_redset.py               REDSET training
 baseline_redset.py            REDSET scheduling baselines
-redset_ablation.py            REDSET comparison runner
-test_*.py                    Regression tests using synthetic data
-```
-
-## Tests
-
-The regression tests use small synthetic inputs and do not require the raw datasets:
-
-```bash
-python -m unittest discover -s . -p 'test_*.py' -v
 ```

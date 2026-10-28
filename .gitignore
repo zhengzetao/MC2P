@@ -37,3 +37,7 @@ venv/
 /font/
 /diff.tex
 /tsne_cluster*.pdf
+
+# Keep local regression tests and ablation runners out of the core-code repository.
+/test_*.py
+/redset_ablation.py
