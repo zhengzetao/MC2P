@@ -61,7 +61,7 @@ class BaseBuffer(ABC):
         super(BaseBuffer, self).__init__()
         self.buffer_size = buffer_size
         self.observation_space = observation_space
-        self.state_space = observation_space  
+        self.state_space = observation_space
         self.action_space = action_space
         self.obs_shape = get_obs_shape(observation_space)
 

@@ -58,8 +58,21 @@ class DRLAgent:
         error_memory = []
         episode_start = 1
         test_env.reset()
+
+        # 添加时间统计
+        total_predict_time = 0
+        predict_count = 0
+
         for i in range(len(environment.df.index.unique())):
+            # 记录预测开始时间
+            predict_start = time.time()
             action, _ = model.predict(test_state, deterministic=True)
+            # 记录预测结束时间
+            predict_end = time.time()
+
+            total_predict_time += (predict_end - predict_start)
+            predict_count += 1
+
             # test_state, rewards, dones, info = test_env.step([action])
             test_state, rewards, dones, info = test_env.step(action)
             episode_start = dones
@@ -71,6 +84,15 @@ class DRLAgent:
             if dones[0]:
                 print("hit end!")
                 break
+
+        # 输出测试时间指标
+        if predict_count > 0:
+            avg_predict_time = total_predict_time / predict_count
+            print(f"测试时间统计:")
+            print(f"  总预测时间: {total_predict_time:.4f}秒")
+            print(f"  预测次数: {predict_count}")
+            print(f"  平均每次预测时间: {avg_predict_time*1000:.4f}毫秒")
+
         return account_memory[0], truth_account_memory[0], error_memory[0]#, days_return_memory[0]
 
     def __init__(self, env):

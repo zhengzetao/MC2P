@@ -1,4 +1,5 @@
 import time
+import os
 import pandas as pd
 import numpy as np
 import matplotlib
@@ -13,10 +14,25 @@ from preprocessor.dataloader import DataLoader
 from preprocessor.preprocessors import FeatureEngineer, data_split, series_decomposition
 # from finrl.neo_finrl.env_stock_trading.env_stocktrading import StockTradingEnv
 from env.env_portfolio import StockPortfolioEnv
+from env.conditional_topk_wrapper import ConditionalTopKWrapper
 from models import DRLAgent
 from plot import backtest_stats, backtest_plot, get_daily_return, get_baseline, convert_daily_return_to_pyfolio_ts
 
 import itertools
+
+
+def _conditional_topk_enabled(value=None):
+    if value is None:
+        value = os.environ.get("MC2P_CONDITIONAL_TOPK", "off")
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _apply_conditional_topk(env, K, enabled=None):
+    enabled = _conditional_topk_enabled() if enabled is None else bool(enabled)
+    selected_num = 1 if enabled else int(K)
+    if enabled:
+        return ConditionalTopKWrapper(env, int(K)), selected_num
+    return env, selected_num
 
 
 def train_stock_trading(dataset, K, strategy):
@@ -65,7 +81,7 @@ def train_stock_trading(dataset, K, strategy):
 
     truth_indexing = indexing_data['Indexing'].pct_change().dropna()
     indexing_data = indexing_data['Indexing'].pct_change().dropna().iloc[lookback:]
-    
+
 
     # Training & Trading data split
     train, trade = data_split(df, indexing_data, lookback)
@@ -77,14 +93,14 @@ def train_stock_trading(dataset, K, strategy):
     print(f"Stock Dimension: {stock_dimension}, State Space: {state_space}")
 
     env_kwargs = {
-        "hmax": 100, 
-        "initial_amount": 1000000, 
-        "transaction_cost_pct": 0.001, 
-        "state_space": state_space, 
-        "stock_dim": stock_dimension, 
-        "tech_indicator_list": config.TECHNICAL_INDICATORS_LIST, 
+        "hmax": 100,
+        "initial_amount": 1000000,
+        "transaction_cost_pct": 0.001,
+        "state_space": state_space,
+        "stock_dim": stock_dimension,
+        "tech_indicator_list": config.TECHNICAL_INDICATORS_LIST,
         # "action_space": config.SELECTED_STOCK_NUM,
-        "action_space": stock_dimension-1, # one is index 
+        "action_space": stock_dimension-1, # one is index
         "reward_scaling": 1e-4,
         "lookback": lookback+1, #lookback=9, but the data length is 10
         }
@@ -92,13 +108,15 @@ def train_stock_trading(dataset, K, strategy):
 
     e_train_gym = StockPortfolioEnv(df=train, indexing=truth_indexing, **env_kwargs)
     e_trade_gym = StockPortfolioEnv(df=trade, indexing=truth_indexing, turbulence_threshold=250, **env_kwargs)
+    e_train_gym, selected_num = _apply_conditional_topk(e_train_gym, K)
+    e_trade_gym, _ = _apply_conditional_topk(e_trade_gym, K)
+    print("Conditional Top-K: {}".format("on" if _conditional_topk_enabled() else "off"))
     # env_train, _ = e_train_gym.get_sb_env()
 
     agent = DRLAgent(env=e_train_gym)
 
     print("==============Model Training===========")
     now = datetime.datetime.now().strftime("%Y%m%d-%Hh%M")
-    # print(time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()))
 
     ################ A2C #########################
     # model_a2c = agent.get_model("a2c",K)
@@ -107,19 +125,21 @@ def train_stock_trading(dataset, K, strategy):
     # )
 
     ################ DQN #########################
-    model_dqn = agent.get_model("dqn", K, strategy)
+    model_kwargs = dict(config.DQN_PARAMS)
+    if os.environ.get("SIT_SEED") is not None:
+        model_kwargs["seed"] = int(os.environ["SIT_SEED"])
+    total_timesteps = int(os.environ.get("SIT_TIMESTEPS", "50000"))
+    model_dqn = agent.get_model("dqn", selected_num, strategy, model_kwargs=model_kwargs)
     trained_dqn = agent.train_model(
-        model=model_dqn, tb_log_name="dqn", total_timesteps=150000, eval_env = e_trade_gym, model_save_path=TRAINED_MODEL_PATH
+        model=model_dqn, tb_log_name="dqn", total_timesteps=total_timesteps, eval_env = e_trade_gym, model_save_path=TRAINED_MODEL_PATH
     )
     # trained_dqn.save(TRAINED_MODEL_PATH)
 
     print("============== Start Trading===========")
-    # print(time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()))
 
     df_account_value, df_actions, df_error= DRLAgent.DRL_prediction(
         model=trained_dqn, environment = e_trade_gym
     )
-    # print(time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()))
     df_account_value.to_csv(
         "./" + config.RESULTS_DIR + "/df_account_value_" + dataset + ".csv"
     )
@@ -127,12 +147,12 @@ def train_stock_trading(dataset, K, strategy):
     df_error.to_csv("./" + config.RESULTS_DIR + "/df_error_" + dataset + ".csv")
 
     print("==============Get Backtest Results===========")
- 
+
     from pyfolio import timeseries
     DRL_strat = convert_daily_return_to_pyfolio_ts(df_account_value)
-    perf_func = timeseries.perf_stats 
-    perf_stats_all = perf_func( returns=DRL_strat, 
-                              factor_returns=DRL_strat, 
+    perf_func = timeseries.perf_stats
+    perf_stats_all = perf_func( returns=DRL_strat,
+                              factor_returns=DRL_strat,
                                 positions=None, transactions=None, turnover_denom="AGB")
     print("==============DRL Strategy Stats===========")
     print(perf_stats_all)

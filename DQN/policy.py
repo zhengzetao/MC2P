@@ -1,4 +1,5 @@
 from typing import Any, Dict, List, Optional, Type, Union
+import os
 import pdb
 import gym
 import torch
@@ -28,9 +29,15 @@ from tools.torch_layers import (
     NatureCNN,
     create_mlp,
     RNN,
+    SetTransformer,
+    GAT,
 )
 from stable_baselines3.common.type_aliases import Schedule
 from stable_baselines3.common.utils import obs_as_tensor, get_device
+
+
+def _env_flag(name, default="off"):
+    return os.environ.get(name, default).strip().lower() in {"1", "true", "yes", "on"}
 
 
 class QNetwork(nn.Module):
@@ -71,15 +78,23 @@ class QNetwork(nn.Module):
         self.activation_fn = activation_fn
         self.features_extractor = None
         self.selected_num = selected_num
-        self.strategy = strategy
+        self.strategy = self._normalize_strategy(strategy)
         self.features_dim = features_dim
         self.action_space = action_space
         self.observation_space = observation_space
+        self.conditional_topk = bool(getattr(observation_space, "conditional_topk", False))
         self.normalize_images = normalize_images
         action_dim = self.action_space.n  # number of actions
         self._build_network(self.features_dim, action_dim, self.net_arch, self.activation_fn)
         # q_net = create_mlp(self.features_dim, action_dim, self.net_arch, self.activation_fn)
         # self.q_net = nn.Sequential(*q_net)
+
+    @staticmethod
+    def _normalize_strategy(strategy: str) -> str:
+        aliases = {
+            "set_transfomer": "set_transformer",
+        }
+        return aliases.get(strategy, strategy)
 
     def _build_network(self, features_dim, action_dim, net_arch, activation_fn):
         if self.strategy == "concat":
@@ -97,10 +112,10 @@ class QNetwork(nn.Module):
             self.stock_network = nn.Sequential(*stock_network)
             self.index_network = nn.Sequential(*index_network)
 
-            # fuse_network = create_mlp(32*self.observation_space.shape[1], action_dim, net_arch, activation_fn)            
+            # fuse_network = create_mlp(32*self.observation_space.shape[1], action_dim, net_arch, activation_fn)
             # self.fuse_network = nn.Sequential(*fuse_network)
             # self.features_extractor = nn.Flatten()
-            
+
             fuse_network = create_mlp(features_dim*action_dim, action_dim, net_arch, activation_fn)
             score_network = create_mlp(int(features_dim), action_dim, net_arch, activation_fn)
             self.fuse_network = nn.Sequential(*fuse_network)
@@ -164,11 +179,14 @@ class QNetwork(nn.Module):
             index_network = create_mlp(int(features_dim*action_dim), action_dim, net_arch, activation_fn)
             self.fuse_network = nn.Sequential(*fuse_network)
             self.index_network = nn.Sequential(*index_network)
-        
+
         if self.strategy == "interactive":
             print("execute the interactive strategy")
             # encoder = LSHSelfAttention(dim = features_dim, heads = 2, bucket_size = 32, n_hashes = 6, causal = False)
-            encoder = LSHAttention(bucket_size = 4, n_hashes = 2)
+            lsh_bucket_size = int(os.getenv("MC2P_LSH_BUCKET_SIZE", "4"))
+            lsh_n_hashes = int(os.getenv("MC2P_LSH_N_HASHES", "2"))
+            print(f"LSH config: bucket_size={lsh_bucket_size}, n_hashes={lsh_n_hashes}")
+            encoder = LSHAttention(bucket_size = lsh_bucket_size, n_hashes = lsh_n_hashes)
             # num_head = 2
             # num_layer = 2
             input_dim = self.observation_space.shape[0]
@@ -192,6 +210,31 @@ class QNetwork(nn.Module):
             # self.scale_dot_att = SoftAttention(features_dim)
             fuse_network = create_mlp(features_dim*action_dim, action_dim, net_arch, activation_fn)
             self.fuse_network = nn.Sequential(*fuse_network)
+
+        # 添加Set Transformer策略
+        if self.strategy == "set_transformer":
+            print("execute the set transformer strategy")
+            self.encoder = SetTransformer(
+                input_dim=self.observation_space.shape[0],
+                hidden_dim=features_dim,
+                num_heads=4,
+                num_layers=2
+            )
+            self.features_extractor = nn.Flatten()
+            self.node_scorer = nn.Linear(features_dim, 1)
+
+        # 添加GAT策略
+        if self.strategy == "gat":
+            print("execute the GAT strategy")
+            self.encoder = GAT(
+                input_dim=self.observation_space.shape[0],
+                hidden_dim=features_dim,
+                output_dim=features_dim,
+                num_heads=4,
+                num_layers=2
+            )
+            self.features_extractor = nn.Flatten()
+            self.node_scorer = nn.Linear(features_dim, 1)
 
     def extract_features(self, obs):
         if self.strategy == "concat":
@@ -243,7 +286,6 @@ class QNetwork(nn.Module):
             # obs = obs.permute(0, 2, 1)
             # stock_tran_hidden = self.encoder(obs)
             stock_tran_hidden = self.encoder(rnn_hidden)
-            # print(stock_tran_hidden.shape)
             # exit()
             stock_tran_hidden = stock_tran_hidden[:,1:,:]
             index_feat = stock_tran_hidden[:,0,:]
@@ -273,8 +315,8 @@ class QNetwork(nn.Module):
             flatten_stock_feat2 = self.features_extractor(stock_index_hidden)  #stocks feat relation between index and assets
             stock_score = self.fuse_network(flatten_stock_feat1)
             index_score = self.index_network(flatten_stock_feat2)
-            features =  0.7*index_score +0.3*stock_score 
-        
+            features =  0.7*index_score +0.3*stock_score
+
         if self.strategy == "interactive":
             obs = obs.permute(0, 2, 1)
             stock_data = obs
@@ -286,9 +328,22 @@ class QNetwork(nn.Module):
             # stock_rnn_hidden = stock_rnn_hidden[:,-1,:].view(batch_size*stock_num, self.features_dim)
             stock_data = stock_rnn_hidden.view(batch_size, stock_num, self.features_dim)
             stock_reform_hidden = self.encoder(stock_data, stock_data)
-            flatten_stock_feat1 = self.features_extractor(stock_data) #stocks feat with relation among assets
+            if _env_flag("MC2P_LEGACY_INTERACTIVE_FLATTEN"):
+                flatten_stock_feat1 = self.features_extractor(stock_data)
+            else:
+                flatten_stock_feat1 = self.features_extractor(stock_reform_hidden) #stocks feat with relation among assets
             stock_score = self.fuse_network(flatten_stock_feat1)
-            features =  stock_score 
+            features =  stock_score
+
+        if self.strategy == "set_transformer":
+            stock_data = obs.permute(0, 2, 1)
+            encoded = self.encoder(stock_data)
+            features = self.node_scorer(encoded).squeeze(-1)
+
+        if self.strategy == "gat":
+            stock_data = obs.permute(0, 2, 1)
+            encoded = self.encoder(stock_data)
+            features = self.node_scorer(encoded).squeeze(-1)
 
         return features
 
@@ -301,17 +356,19 @@ class QNetwork(nn.Module):
         """
         if self.strategy == "concat":
             return self.q_net(self.extract_features(obs))
-        if self.strategy == "solo" or self.strategy =="interactive" or self.strategy=="two":
+        if self.strategy in {"solo", "interactive", "two", "set_transformer", "gat"}:
             return self.extract_features(obs)
 
     def _predict(self, observation: th.Tensor, deterministic: bool = True) -> th.Tensor:
         q_values = self(observation)
-        bool_mask = ~(observation[0] == 0).all(dim=0)
+        # Mask padded candidates separately for every observation in the batch.
+        bool_mask = ~(observation == 0).all(dim=1)
+        if self.conditional_topk:
+            bool_mask = bool_mask & (observation[:, -1, :] < 0.5)
         q_values = q_values.masked_fill(~bool_mask, float('-inf'))
         # Greedy action
         k_actions = q_values.argsort(dim=1, descending=True)[:,:self.selected_num]
         # action = q_values.argmax(dim=1).reshape(-1)
-        # print('neural network output',k_actions)
         return k_actions
 
     # def _get_constructor_parameters(self) -> Dict[str, Any]:
@@ -389,7 +446,7 @@ class DQNPolicy(nn.Module):
         self.optimizer_class = optimizer_class
         self.optimizer_kwargs = optimizer_kwargs
         self.selected_num = selected_num
-        self.strategy = strategy
+        self.strategy = QNetwork._normalize_strategy(strategy)
         self.device = get_device(device)
 
         self.net_args = {
@@ -420,15 +477,38 @@ class DQNPolicy(nn.Module):
         self.q_net_target.load_state_dict(self.q_net.state_dict())
         # self.q_net_target.set_training_mode(False)
         self.q_net_target.train(False)
+        # Target parameters supply bootstrap values and are never optimized.
+        for param in self.q_net_target.parameters():
+            param.requires_grad = False
 
         # Setup optimizer with initial learning rate
-        self.optimizer = self.optimizer_class(self.parameters(), lr=lr_schedule(1), **self.optimizer_kwargs)
+        optimizer_params = self._get_q_net_parameters()
+        self.optimizer = self.optimizer_class(optimizer_params, lr=lr_schedule(1), **self.optimizer_kwargs)
+
+    def _get_q_net_parameters(self) -> List[th.nn.Parameter]:
+        params = [param for param in self.q_net.parameters() if param.requires_grad]
+        if params:
+            return params
+
+        fallback_modules = [
+            "encoder", "node_scorer", "q_net", "RNN", "stock_RNN", "index_RNN",
+            "fuse_network", "score_network", "index_network", "stock_network", "proj",
+        ]
+        for module_name in fallback_modules:
+            module = getattr(self.q_net, module_name, None)
+            if isinstance(module, nn.Module):
+                params.extend([param for param in module.parameters() if param.requires_grad])
+
+        if not params:
+            raise ValueError(f"No trainable parameters found for strategy={self.strategy}")
+
+        return params
 
     def make_q_net(self) -> QNetwork:
         # Make sure we always have separate networks for features extractors etc
         # net_args = self._update_features_extractor(self.net_args, features_extractor=None)
         # return QNetwork(**net_args).to(self.device)
-        return QNetwork(**self.net_args).cuda()
+        return QNetwork(**self.net_args).to(self.device)
 
     def forward(self, obs: th.Tensor, deterministic: bool = True) -> th.Tensor:
         return self._predict(obs, deterministic=deterministic)
@@ -436,11 +516,11 @@ class DQNPolicy(nn.Module):
     def _predict(self, obs: th.Tensor, deterministic: bool = True) -> th.Tensor:
         return self.q_net._predict(obs, deterministic=deterministic)
 
-    def predict(self, obs: th.Tensor, 
-        state=None, 
+    def predict(self, obs: th.Tensor,
+        state=None,
         episode_start  = None,
         deterministic: bool = True):
-        
+
         self.set_training_mode(False)
         # observation, vectorized_env = self.obs_to_tensor(observation)
         obs = obs_as_tensor(obs, self.device)

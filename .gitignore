@@ -1,0 +1,39 @@
+# Runtime outputs and experiment artifacts.
+__pycache__/
+*.py[cod]
+.DS_Store
+.pytest_cache/
+.venv/
+venv/
+/results/
+/trained_models/
+/tensorboard_log/
+*.log
+*.pth
+*.pt
+*.ckpt
+*.tmp
+*_tmp.py
+/backup*/
+
+# Additional datasets are provisioned separately; existing tracked data remain.
+/datasets/
+
+# Machine-specific records and one-off analysis files.
+/SERVER_INFO.md
+/run_*_server.sh
+/run_gamma_ablation.py
+/run_indtrack1_best_vs_final.py
+/run_indtrack1_legacy_variant_ablation.py
+/run_nikkei_lsh_failure_study.py
+/run_sit_tableiv_conditional_ablation.py
+/run_temporal_cost_ablation.py
+/test_lsh_policy_sensitivity.py
+/SIT_clusters_encode.py
+/preprocessor/download.py
+/tools/test.py
+/test.py
+/trade.py
+/font/
+/diff.tex
+/tsne_cluster*.pdf

@@ -22,7 +22,7 @@ from stable_baselines3.common.noise import ActionNoise, VectorizedActionNoise
 from stable_baselines3.common import utils
 from stable_baselines3.common.preprocessing import maybe_transpose
 from stable_baselines3.common.type_aliases import GymEnv, MaybeCallback, Schedule, RolloutReturn
-from stable_baselines3.common.utils import get_linear_fn, get_parameters_by_name, is_vectorized_observation, polyak_update, get_schedule_fn, get_device, update_learning_rate
+from stable_baselines3.common.utils import get_linear_fn, get_parameters_by_name, is_vectorized_observation, polyak_update, get_schedule_fn, get_device, update_learning_rate, set_random_seed
 
 DQNSelf = TypeVar("DQNSelf", bound="DQN")
 
@@ -133,10 +133,11 @@ class DQN():
         #     supported_action_spaces=(gym.spaces.Discrete,),
         #     support_multi_env=True,
         # )
-        
+
         self.buffer_size = buffer_size
         self.observation_space = env.observation_space
         self.action_space = env.action_space
+        self.conditional_topk = bool(getattr(self.observation_space, "conditional_topk", False))
         self.exploration_initial_eps = exploration_initial_eps
         self.exploration_final_eps = exploration_final_eps
         self.exploration_fraction = exploration_fraction
@@ -191,8 +192,8 @@ class DQN():
         self.set_random_seed(self.seed)
         self.lr_schedule = get_linear_fn(self.learning_rate, self.learning_rate*0.1, 0.5)
         # self.lr_schedule = get_schedule_fn(self.learning_rate)
-        
-        # Use ReplayBuffer 
+
+        # Use ReplayBuffer
         self.replay_buffer_class = ReplayBuffer
         self.replay_buffer = self.replay_buffer_class(
             self.buffer_size,
@@ -276,30 +277,35 @@ class DQN():
             with th.no_grad():
                 # Compute the next Q-values using the target network
                 next_q_values = self.q_net_target(replay_data.next_observations)
+                if self.conditional_topk:
+                    legal_mask = self._torch_legal_action_mask(replay_data.next_observations)
+                    next_q_values = next_q_values.masked_fill(~legal_mask, float("-inf"))
                 # Follow greedy policy: use the one with the highest value
                 # next_q_values, _ = next_q_values.max(dim=1)
                 sorted_q_values, indices = next_q_values.sort(dim=1, descending=True)
                 next_q_values = sorted_q_values[:,:self.selected_num]
                 # next_q_values = next_q_values.sum(dim=1)
-                
+
                 # Avoid potential broadcast issue
                 # next_q_values = next_q_values.reshape(-1, 1)
                 next_q_values = next_q_values.reshape(-1, self.selected_num)
+                if self.conditional_topk:
+                    # Empty terminal states mask every action to -inf. Zero the
+                    # bootstrap before multiplying: 0 * -inf would produce NaN.
+                    next_q_values = next_q_values.masked_fill(replay_data.dones.bool(), 0.0)
                 # 1-step TD target
                 target_q_values = replay_data.rewards + (1 - replay_data.dones) * self.gamma * next_q_values
 
             # Get current Q-values estimates
-            # pdb.set_trace()
             current_q_values = self.q_net(replay_data.observations)
 
             # Retrieve the q-values for the actions from the replay buffer
             current_q_values = th.gather(current_q_values, dim=1, index=replay_data.actions.long())
             # current_q_values = current_q_values.sum(dim=1)
-            
+
             # Compute Huber loss (less sensitive to outliers)
             loss = F.smooth_l1_loss(current_q_values, target_q_values)
             losses.append(loss.item())
-            # print('losses',current_q_values[0,:1], target_q_values[0,:1],replay_data.rewards[0],losses)
             # Optimize the policy
             self.policy.optimizer.zero_grad()
             loss.backward()
@@ -309,7 +315,6 @@ class DQN():
 
         # Increase update counter
         self._n_updates += gradient_steps
-
         self._logger.record("train/n_updates", self._n_updates, exclude="tensorboard")
         self._logger.record("train/loss", np.mean(losses))
 
@@ -340,10 +345,13 @@ class DQN():
             # else:
             #     action = np.array(self.action_space.sample())
             unscaled_action = []
-            legal_action = (observation[0] != 0).any(axis=0).sum().item()
-            while len(unscaled_action) < self.selected_num: 
-                sample = self.action_space.sample()
-                if sample not in unscaled_action and sample < legal_action: unscaled_action.append(sample) 
+            legal_indices = self._numpy_legal_action_indices(observation)
+            while len(unscaled_action) < self.selected_num:
+                if len(legal_indices) == 0:
+                    break
+                sample = int(np.random.choice(legal_indices))
+                if sample not in unscaled_action:
+                    unscaled_action.append(sample)
             # unscaled_action = np.array([unscaled_action])
             action = np.array([unscaled_action])
         else:
@@ -398,7 +406,6 @@ class DQN():
                 if gradient_steps > 0:
                     self.train(batch_size=self.batch_size, gradient_steps=gradient_steps)
                 # for name, param in list(self.policy.named_parameters())[:1]: print(name,param)
-                # pdb.set_trace()
             if self.num_timesteps > 10000 and self.num_timesteps % eval_freq == 0:
                 test_env, test_state = eval_env.get_sb_env()
                 # error_memory = []
@@ -410,15 +417,14 @@ class DQN():
                     test_state, rewards, dones, info = test_env.step(action)
                     episode_start = dones
                     if i == (len(eval_env.df.index.unique()) - 2):
-                        error_memory = test_env.env_method(method_name="save_tracking_error_memory")  
+                        error_memory = test_env.env_method(method_name="save_tracking_error_memory")
                 error = np.linalg.norm(error_memory[0]["daily_return"].values)/len(error_memory[0]["daily_return"].values)
-                if error < minimal_error_perf: 
+                if error < minimal_error_perf:
                     minimal_error_perf = error
                     # error_list = error_memory[0]["daily_return"].values
                     print("better tracking_error:{}".format(minimal_error_perf))
                     self.save(model_save_path)
         # Plot the episode reward
-        # print("best error:{}".format(minimal_error_perf))
         # self.perf_metric(error_list)
         plt.plot(range(len(self.Reward_total)), self.Reward_total, "r")
         pd_reward_total = pd.DataFrame(data=self.Reward_total)
@@ -546,16 +552,15 @@ class DQN():
             # start = time()
             # Select action randomly or according to policy
             actions, buffer_actions = self._sample_action(learning_starts, action_noise, env.num_envs)
-            # print("decision time consume:", time()-start)
             # Rescale and perform action
             new_obs, rewards, dones, infos = env.step(actions)
-
-            if infos and infos[0].get("data_terminal") is True: 
+            if infos and infos[0].get("data_terminal") is True:
                 dones = [infos[0].get("data_terminal")]
 
             if dones:
                 self.Reward_total.append(sum(self.reward_episode))
                 self.reward_episode = []
+                # if len(self.Reward_total)>2 and self.Reward_total[-1] - self.Reward_total[-2] > 10: pdb.set_trace()
             else:
                 self.reward_episode.append(rewards)
 
@@ -628,10 +633,13 @@ class DQN():
             # Warmup phase
             # if self._last_obs not exist, legal_action default values is 5
             unscaled_action = []
-            legal_action = (self._last_obs[0] != 0).any(axis=0).sum().item() if self._last_obs is not None else 5
-            while len(unscaled_action) < self.selected_num: 
-                sample = self.action_space.sample()
-                if sample not in unscaled_action and sample < legal_action: unscaled_action.append(sample) 
+            legal_indices = self._numpy_legal_action_indices(self._last_obs)
+            while len(unscaled_action) < self.selected_num:
+                if len(legal_indices) == 0:
+                    break
+                sample = int(np.random.choice(legal_indices))
+                if sample not in unscaled_action:
+                    unscaled_action.append(sample)
             unscaled_action = np.array([unscaled_action])
         else:
             # Note: when using continuous actions,
@@ -654,6 +662,25 @@ class DQN():
             buffer_action = unscaled_action
             action = buffer_action
         return action, buffer_action
+
+    def _numpy_legal_action_indices(self, observation):
+        if observation is None:
+            return np.arange(min(5, self.action_space.n), dtype=int)
+        obs = np.asarray(observation)
+        state = obs[0] if obs.ndim == 3 else obs
+        # Padded candidates have all-zero feature columns.
+        legal_mask = (state != 0).any(axis=0)
+        if self.conditional_topk:
+            legal_mask = legal_mask & (state[-1] < 0.5)
+        return np.flatnonzero(legal_mask).astype(int)
+
+    # Tensor shape: (batch, features, candidates). The final feature row
+    # marks previous selections when conditional decoding is enabled.
+    def _torch_legal_action_mask(self, observations):
+        legal_mask = ~(observations == 0).all(dim=1)
+        if self.conditional_topk:
+            legal_mask = legal_mask & (observations[:, -1, :] < 0.5)
+        return legal_mask
 
 
     def _store_transition(
@@ -705,7 +732,7 @@ class DQN():
                     # VecNormalize normalizes the terminal observation
                     if self._vec_normalize_env is not None:
                         next_obs[i] = self._vec_normalize_env.unnormalize_obs(next_obs[i, :])
-        
+
         # store the data in portfolio env  or at terminal of data in supplier env
         # the data at the end of data terminal in supplier env will be discarded
         if len(infos) == 0 or self.data_terminal is False:
@@ -785,7 +812,7 @@ class DQN():
     def save(self, path: str='./trained_models/SP500/') -> None:
         torch.save(self.policy.state_dict(), path + f"best_policy.pth")
 
-    def load(self, path: str='./trained_models/SP500/') -> None: 
+    def load(self, path: str='./trained_models/SP500/') -> None:
         self.policy.load_state_dict(torch.load(path + f"best_policy.pth"))
 
     # def perf_metric(self, daily_returns):
@@ -810,5 +837,3 @@ class DQN():
     #     max_drawdown = df['Drawdown'].min()
 
     #     # print("Mean Daily Return:", mean_daily_return)
-    #     print("Annualized Sharpe Ratio:", annualized_sharpe_ratio)
-    #     print("Maximum Drawdown:", max_drawdown)

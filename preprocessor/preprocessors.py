@@ -77,7 +77,6 @@ def data_split_SP500(df, indexing, lookback):
         test_index_data = indexing[condition3_index & condition4_index]
         test_index.append(test_index_data['Close'].pct_change().dropna().values)
 
-        # print(train_slice.Date.unique()[:],test_slice.Date.unique())
 
         train_temp_df = pd.DataFrame({'Week_ID':train_slice.Week_ID.unique(),'return_list':train_return_list})
         test_temp_df = pd.DataFrame({'Week_ID':test_slice.Week_ID.unique(),'return_list':test_return_list})
@@ -94,8 +93,6 @@ def data_split_SP500(df, indexing, lookback):
         train_slice = add_rubbish_line(train_slice)
         test_slice = add_rubbish_line(test_slice)
 
-        # print(np.array(train_index_df.loc[0].index_list).shape,np.array(train_slice.loc[0].return_list.values[0]).shape)
-        # print(np.array(test_index_df.loc[0].index_list).shape,np.array(test_slice.loc[0].return_list.values[0]).shape)
 
         train.append(train_slice)
         test.append(test_slice)

@@ -43,10 +43,10 @@ TECHNICAL_INDICATORS_LIST = ["macd","rsi_30", "close_5_sma", "close_15_sma", "cl
 ## Model Parameters
 A2C_PARAMS = {"n_steps": 5, "ent_coef": 0.005, "learning_rate": 0.0002}
 DQN_PARAMS = {
-    "batch_size": 64, 
-    "buffer_size": 100000, 
+    "batch_size": 64,
+    "buffer_size": 100000,
     "learning_rate": 0.0001,
-    "learning_starts": 10000,
+    "learning_starts": 5000,
 }
 PPO_PARAMS = {
     "n_steps": 2048,

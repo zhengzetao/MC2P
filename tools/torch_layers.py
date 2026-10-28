@@ -6,7 +6,8 @@ import torch
 import math
 import torch as th
 from torch import nn
-import torch.nn.functional as f
+import torch.nn.functional as F
+f = F  # Keep the alias used by the existing attention layers.
 
 from torch.nn import Identity
 from torch.autograd import Function
@@ -160,7 +161,8 @@ class RNN(nn.Module):
         obs = obs.reshape(obs.shape[0], obs.shape[1], self.input_shape) # reshape to [30, 252, 1]
         # x = f.relu(self.fc1(obs.reshape(-1, self.input_shape)))
         # h_in = hidden_state.reshape(-1, self.hidden_dim)
-        output, h1 = self.rnn(obs, hidden_state.cuda())
+        # Preserve CPU initialization while following the input tensor's device.
+        output, h1 = self.rnn(obs, hidden_state.to(obs.device))
         return output
 
 
@@ -204,7 +206,7 @@ class MlpExtractor(nn.Module):
         policy_only_layers = []  # Layer sizes of the network that only belongs to the policy network
         value_only_layers = []  # Layer sizes of the network that only belongs to the value network
         last_layer_dim_shared = feature_dim
-        
+
         # Iterate through the shared layers and build the shared parts of the network
         for layer in net_arch:
             # if isinstance(layer, int):  # Check that this is a shared layer
@@ -910,7 +912,7 @@ class LSHSelfAttention(nn.Module):
             input_attn_mask = merge_batch_and_heads(expand_dim(1, lsh_h, input_attn_mask))
             masks['input_attn_mask'] = input_attn_mask
 
-        attn_fn = self.lsh_attn 
+        attn_fn = self.lsh_attn
         partial_attn_fn = partial(attn_fn, query_len = t, pos_emb = pos_emb, **kwargs)
         attn_fn_in_chunks = process_inputs_chunk(partial_attn_fn, chunks = self.attn_chunks)
 
@@ -1055,12 +1057,10 @@ class ScaleDotAttention(nn.Module):
         if mask is not None:
             attn_logits = attn_logits.masked_fill(mask == 0, -9e15)
         attention = f.softmax(attn_logits, dim=-1)
-        # print(attention.shape)
         # exit()
         # values = attention*v
         values = torch.matmul(attention.reshape(bs,-1,n), v)
         # values = torch.matmul(attention, v)
-        # print(values.shape)
         # exit()
         return values, attention
 
@@ -1090,3 +1090,158 @@ class SoftAttention(nn.Module):
         output = coef.reshape(bs, -1, 1) * v
 
         return output, coef.reshape(bs, -1, 1)
+
+
+# 新增的Set Transformer编码器
+class SetTransformer(nn.Module):
+    """Set Transformer encoder implementation"""
+    def __init__(self, input_dim, hidden_dim, num_heads, num_layers, dropout=0.1):
+        super().__init__()
+        self.input_dim = input_dim
+        self.hidden_dim = hidden_dim
+        self.num_heads = num_heads
+
+        # 嵌入层
+        self.embedding = nn.Linear(input_dim, hidden_dim)
+
+        # 多层Transformer编码器
+        self.encoder_layers = nn.ModuleList([
+            nn.MultiheadAttention(hidden_dim, num_heads, dropout=dropout, batch_first=True)
+            for _ in range(num_layers)
+        ])
+
+        # 层归一化
+        self.layer_norms = nn.ModuleList([
+            nn.LayerNorm(hidden_dim)
+            for _ in range(num_layers)
+        ])
+
+        # 前馈网络
+        self.ffn_layers = nn.ModuleList([
+            nn.Sequential(
+                nn.Linear(hidden_dim, hidden_dim * 2),
+                nn.ReLU(),
+                nn.Linear(hidden_dim * 2, hidden_dim)
+            )
+            for _ in range(num_layers)
+        ])
+
+        # 层归一化（FFN后）
+        self.ffn_norms = nn.ModuleList([
+            nn.LayerNorm(hidden_dim)
+            for _ in range(num_layers)
+        ])
+
+    def forward(self, x):
+        """
+        x shape: (batch_size, set_size, input_dim)
+        returns: (batch_size, set_size, hidden_dim)
+        """
+        # 嵌入
+        x = self.embedding(x)
+
+        # 多层编码
+        for i, (encoder_layer, ln1, ffn, ln2) in enumerate(zip(
+            self.encoder_layers, self.layer_norms, self.ffn_layers, self.ffn_norms)):
+
+            # 注意力机制
+            attn_out, _ = encoder_layer(x, x, x)
+            x = ln1(x + attn_out)
+
+            # 前馈网络
+            ffn_out = ffn(x)
+            x = ln2(x + ffn_out)
+
+        return x
+
+
+# 新增的GAT编码器
+class GATLayer(nn.Module):
+    """Graph Attention Network layer"""
+    def __init__(self, input_dim, output_dim, num_heads=1, dropout=0.1, concat=True):
+        super().__init__()
+        self.input_dim = input_dim
+        self.output_dim = output_dim
+        self.num_heads = num_heads
+        self.concat = concat
+
+        self.W = nn.Linear(input_dim, output_dim * num_heads, bias=False)
+        self.a_src = nn.Parameter(torch.randn(num_heads, output_dim) * 0.1)
+        self.a_dst = nn.Parameter(torch.randn(num_heads, output_dim) * 0.1)
+        self.dropout = nn.Dropout(dropout)
+        self.leaky_relu = nn.LeakyReLU(0.2)
+
+    def forward(self, x, adj_matrix=None):
+        """
+        x: (batch_size, num_nodes, input_dim)
+        adj_matrix: (batch_size, num_nodes, num_nodes) - 邻接矩阵
+        """
+        batch_size, num_nodes, _ = x.shape
+
+        # 线性变换
+        h = self.W(x)  # (batch_size, num_nodes, output_dim * num_heads)
+        h = h.view(batch_size, num_nodes, self.num_heads, self.output_dim)
+        h = h.permute(0, 2, 1, 3)  # (batch_size, num_heads, num_nodes, output_dim)
+
+        src_scores = (h * self.a_src.unsqueeze(0).unsqueeze(2)).sum(dim=-1)
+        dst_scores = (h * self.a_dst.unsqueeze(0).unsqueeze(2)).sum(dim=-1)
+        e = self.leaky_relu(src_scores.unsqueeze(-1) + dst_scores.unsqueeze(-2))
+
+        if adj_matrix is not None:
+            if adj_matrix.dim() == 3:
+                adj_matrix = adj_matrix.unsqueeze(1)
+            zero_vec = -9e15 * torch.ones_like(e)
+            attention = torch.where(adj_matrix > 0, e, zero_vec)
+        else:
+            attention = e
+        attention = F.softmax(attention, dim=-1)
+        attention = self.dropout(attention)
+
+        # 聚合信息
+        h_prime = torch.matmul(attention, h)
+        if self.concat:
+            h_prime = h_prime.permute(0, 2, 1, 3).contiguous()
+            h_prime = h_prime.view(batch_size, num_nodes, self.num_heads * self.output_dim)
+        else:
+            h_prime = h_prime.mean(dim=1)
+
+        return h_prime
+
+
+class GAT(nn.Module):
+    """Multi-layer GAT encoder"""
+    def __init__(self, input_dim, hidden_dim, output_dim, num_heads, num_layers, dropout=0.1):
+        super().__init__()
+        self.input_dim = input_dim
+        self.hidden_dim = hidden_dim
+        self.output_dim = output_dim
+        self.num_heads = num_heads
+        self.num_layers = num_layers
+
+        # 第一层
+        self.layer1 = GATLayer(input_dim, hidden_dim, num_heads, dropout, concat=True)
+
+        # 中间层
+        self.layers = nn.ModuleList()
+        for _ in range(num_layers - 2):
+            self.layers.append(GATLayer(hidden_dim * num_heads, hidden_dim, num_heads, dropout, concat=True))
+
+        # 最后一层
+        self.layer_last = GATLayer(hidden_dim * num_heads, output_dim, num_heads, dropout, concat=False)
+
+    def forward(self, x, adj_matrix=None):
+        """
+        x: (batch_size, num_nodes, input_dim)
+        adj_matrix: (batch_size, num_nodes, num_nodes)
+        """
+        # 第一层
+        x = self.layer1(x, adj_matrix)
+
+        # 中间层
+        for layer in self.layers:
+            x = layer(x, adj_matrix)
+
+        # 最后一层
+        x = self.layer_last(x, adj_matrix)
+
+        return x

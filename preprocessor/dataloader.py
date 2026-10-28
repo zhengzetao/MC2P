@@ -3,7 +3,10 @@ Yahoo Finance API
 """
 import os
 import pandas as pd
-import yfinance as yf
+try:
+    import yfinance as yf
+except ImportError:
+    yf = None
 import pdb
 
 class DataLoader:
@@ -82,7 +85,6 @@ class DataLoader:
         index_file_path = portfolio_save_path + '/0.csv'
         if os.path.exists(portfolio_save_path):
             ticker_list = os.listdir(portfolio_save_path)
-            # print(ticker_list)
             # standard_file = pd.read_csv(portfolio_save_path + '/' + ticker_list[0],index_col=False)
             # standard_date = pd.to_datetime(standard_file['Date'], errors='coerce')
             ticker_list.remove('0.csv') 
@@ -111,7 +113,6 @@ class DataLoader:
         # reset the index, we want to use numbers as index instead of dates
 
         # data_df = data_df.reset_index()
-        # print(temp_df.head(5))
         # try:
         #     # convert the column names to standardized names
         #     data_df.columns = [
@@ -129,7 +130,6 @@ class DataLoader:
         #     # drop the adjusted close price column
         #     data_df = data_df.drop("adjcp", 1)
         # except NotImplementedError:
-        #     print("the features are not supported currently")
         # create day of the week column (monday = 0)
         # data_df["day"] = data_df["date"].dt.dayofweek
         # convert date to standard string format, easy to filter
@@ -138,7 +138,6 @@ class DataLoader:
         # data_df = data_df.dropna()
         # data_df = data_df.reset_index(drop=True)
         print("Shape of DataFrame: ", data_df.shape)
-        # print("Display indexing: ", indexing.head())
 
         data_df = data_df.reset_index(drop=True)
         data_df = data_df.sort_values(by=['Week_ID','tic']).reset_index(drop=True)

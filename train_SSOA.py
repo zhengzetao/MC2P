@@ -32,7 +32,7 @@ def train_supplier_selection(dataset, K, strategy):
     df_test, demand_test = DataLoader(
         data_name=dataset,
     ).fetch_data_SSOA()
-    
+
     quan_price = ['MaxQuantity1', 'Price1']
     target_columns = ['GreenW', 'GeneralW', 'MinQuantity1', 'Price0', 'MaxQuantity0', 'CCCap', 'SP', 'CF', 'MaxQuantity1', 'Price1']
     scaler = StandardScaler()
@@ -103,10 +103,10 @@ def train_supplier_selection(dataset, K, strategy):
     print(f"Supplier Dimension: {supplier_num}, State Space: {state_space}")
 
     env_kwargs = {
-        "initial_shortage": 0, 
-        "state_space": state_space, 
-        "supplier_num": supplier_num, 
-        # "tech_indicator_list": config.TECHNICAL_INDICATORS_LIST, 
+        "initial_shortage": 0,
+        "state_space": state_space,
+        "supplier_num": supplier_num,
+        # "tech_indicator_list": config.TECHNICAL_INDICATORS_LIST,
         # "action_space": config.SELECTED_STOCK_NUM,
         "action_space": supplier_num,
         "reward_scaling": 1e-4,
@@ -135,7 +135,6 @@ def train_supplier_selection(dataset, K, strategy):
     # trained_dqn.save(TRAINED_MODEL_PATH)
 
     print("============== Start Testing===========")
-    # print(time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()))
     start_time = time.time()
     df_account_value, df_actions, df_error= DRLAgent.DRL_prediction(
         model=trained_dqn, environment = e_test_gym

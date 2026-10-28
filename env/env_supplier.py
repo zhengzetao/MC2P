@@ -140,7 +140,6 @@ class SupplierSelectionEnv(gym.Env):
 
     def step(self, actions):
         self.terminal = self.day >= len(self.df.index.unique()) - 1
-        # print(self.day, self.data['terminal'],actions)
         if self.terminal:
             df = pd.DataFrame(self.purchase_quantity_memory)
             df.columns = ["daily_return"]
@@ -154,10 +153,6 @@ class SupplierSelectionEnv(gym.Env):
             # plt.savefig("results/rewards.png")
             # plt.close()
             print("=================================")
-            # print(self.shortage_gap[:5])
-            # print(self.purchase_quantity_memory[:5])
-            # print(self.truth_demand_memory[:5])
-            # print(self.purchase_quantity_memory,self.cost,self.demand_value,len(self.purchase_quantity_memory),len(self.cost))
             print("avevrage cost of decision / period:{}".format(np.log10(np.mean(self.cost))))
             print("shortage gap:{}".format(np.log10(np.sum(self.shortage_gap)/len(self.shortage_gap))))
             print("average unit price:{}".format(np.sum(self.cost) / np.sum(self.purchase_quantity_memory)))
@@ -169,13 +164,11 @@ class SupplierSelectionEnv(gym.Env):
             #         * df_daily_return["daily_return"].mean()
             #         / df_daily_return["daily_return"].std()
             #     )
-            #     print("Sharpe: ", sharpe)
-            
+
             # turnover_values = np.sum(np.abs(np.diff(self.weights_memory[1:], axis=0)), axis=1) / np.array(self.weights_memory[1:]).shape[1]
 
             # Calculate the average turnover rate
             # average_turnover = np.mean(turnover_values)
-            # print("Turnover: ", average_turnover)
             print("=================================")
 
             return self.state, self.reward, self.terminal, {'data_terminal':True}
@@ -185,8 +178,6 @@ class SupplierSelectionEnv(gym.Env):
                 sol = qp_SSOA_solver(self.price[actions], self.quantity[actions], self.demand_value, lambda_weight=0.9)
             except IndexError:
                 pdb.set_trace()
-            # print('Exact solution with all time-series')
-            # print(sol)
             # weights = np.zeros(self.supplier_num)
             # for k, v in enumerate(actions): weights[v] = sol['x'][k]
             # self.actions_memory.append(actions)
@@ -207,22 +198,19 @@ class SupplierSelectionEnv(gym.Env):
             # save into memory
             self.purchase_quantity_memory.append(total_quantity)
             self.truth_demand_memory.append(truth_demanding)
-            
+
             # self.asset_memory.append(self.demand_value)
             # self.asset_ratio.append(round(new_portfolio_value/self.asset_memory[-2],5))
-            # print(truth_demanding,total_quantity)
-            self.shortage_gap.append(truth_demanding - total_quantity) 
+            self.shortage_gap.append(truth_demanding - total_quantity)
 
             # self.tracking_error = [truth_indexing - portfolio_return]
             # jacarrd similarity
             # sim = len(set(self.actions_memory[-1]).intersection(set(self.actions_memory[-2]))) / \
             #       len(set(self.actions_memory[-1]).union(set(self.actions_memory[-2])))
-            # print(self.demand_value, total_quantity)
             cost = sum(sol * self.price[actions])
             gap = np.absolute(np.mean(abs(self.demand_value - total_quantity)))
             self.reward = (1 - np.clip(gap/2000,0,1)**(3/4))**(4/3) + (1 - np.clip(cost/50000,0,1)**(3/4))**(4/3)
             # self.reward = -np.log(cost + 0.0001) + 13
-            # print(self.reward, self.reward+15,gap, cost)
             self.cost.append(cost)
             # load next state
             self.day += 1
@@ -266,7 +254,7 @@ class SupplierSelectionEnv(gym.Env):
 
     def softmax_normalization(self, actions):
         # cpy_action = deepcopy(actions)
-        # max_number = heapq.nlargest(10, cpy_action) 
+        # max_number = heapq.nlargest(10, cpy_action)
         # max_index = []
         # for t in max_number:
         #     index = cpy_action.index(t)
@@ -310,7 +298,6 @@ class SupplierSelectionEnv(gym.Env):
         # df_days_return = pd.DataFrame(
         #     {"date":df_date,"daily_return":return_list}
         #     )
-        # print(df_days_return)
         # exit()
         df_days_return = pd.DataFrame(return_list)
         # df_days_return.index = df_date.date

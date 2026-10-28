@@ -6,7 +6,8 @@ import heapq
 import math as mh
 from gym import spaces
 import matplotlib
-import ipdb
+import pdb
+import os
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -16,6 +17,19 @@ from tools.qpsolver import qp_solver
 from warnings import simplefilter
 simplefilter(action='ignore', category=FutureWarning)
 simplefilter(action='ignore', category=UserWarning)
+
+
+def _env_flag(name, default="off"):
+    return os.environ.get(name, default).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _qp_target_index_value(data, state):
+    if _env_flag("MC2P_TRUE_INDEX_QP_TARGET"):
+        try:
+            return np.asarray(data["price_list"].values[0])[:, 0]
+        except Exception:
+            pass
+    return state[:, 0]
 
 
 class StockPortfolioEnv(gym.Env):
@@ -83,6 +97,7 @@ class StockPortfolioEnv(gym.Env):
         lookback,
         tech_indicator_list,
         turbulence_threshold=None,
+        temporal_cost_weight=0.0,
         # lookback=252,
         day=0,
     ):
@@ -117,9 +132,10 @@ class StockPortfolioEnv(gym.Env):
         self.data = self.df.loc[self.day, :]
         self.state = np.array(self.data['price_list'].values[0][:,1:])
         # self.index_value = np.array(self.data['index_list'].values[0])
-        self.index_value = self.state[:,0]
+        self.index_value = _qp_target_index_value(self.data, self.state)
         self.terminal = False
         self.turbulence_threshold = turbulence_threshold
+        self.temporal_cost_weight = float(temporal_cost_weight)
         # initalize state: inital portfolio return + individual stock return + individual weights
         self.portfolio_value = self.initial_amount
         self.tracking_error = [0]
@@ -153,7 +169,6 @@ class StockPortfolioEnv(gym.Env):
             print("=================================")
             print("begin_total_asset:{}".format(self.asset_memory[0]))
             print("end_total_asset:{}".format(self.portfolio_value))
-            # print("tracking error:{}".format(self.tracking_error[:10]))
             print("tracking_error:{}".format(np.linalg.norm(self.tracking_error)/len(self.tracking_error)))
 
             df_daily_return = pd.DataFrame(self.portfolio_return_memory)
@@ -165,11 +180,9 @@ class StockPortfolioEnv(gym.Env):
                     / df_daily_return["daily_return"].std()
                 )
                 print("Sharpe: ", sharpe)
-            # print("=================================")
             # Calculate the turnover between consecutive time points
-            
+
             turnover_values = np.sum(np.abs(np.diff(self.weights_memory[1:], axis=0)), axis=1) / np.array(self.weights_memory[1:]).shape[1]
-            # print(turnover_values)
             # exit()
             # Calculate the average turnover rate
             average_turnover = np.mean(turnover_values)
@@ -194,16 +207,16 @@ class StockPortfolioEnv(gym.Env):
             qp_input['index'] = index_value
             qp = qp_solver(qp_input)
             sol = qp.solve()
-            # print('Exact solution with all time-series')
-            # print(sol['x'])
             # exit()
-            weights = np.zeros(self.stock_dim)
+            if _env_flag("MC2P_LEGACY_SIT_RETURN"):
+                weights = np.zeros(self.stock_dim)
+            else:
+                weights = np.zeros(self.action_space.n)
             for k, v in enumerate(actions): weights[v] = sol['x'][k]
             # self.actions_memory.append(np.int64(weights>0))
             self.actions_memory.append(actions)
             self.weights_memory.append(weights)
-            # print(actions, sol['x'],weights)
-            
+
             # calculate portfolio return
             # individual stocks' return * weight
             Week_ID = self.data.Week_ID.values[0]
@@ -211,13 +224,17 @@ class StockPortfolioEnv(gym.Env):
                 portfolio_return =  np.matmul(self.data.loc[self.day].return_list.values[0], weights)
                 truth_indexing = self.indexing.loc[self.day].index_list
             else:
-                portfolio_return = sum(
-                    self.data['return_list'].values[0][Week_ID,:] * weights
-                )
+                if _env_flag("MC2P_LEGACY_SIT_RETURN"):
+                    portfolio_return = sum(
+                        self.data['return_list'].values[0][Week_ID,:] * weights
+                    )
+                else:
+                    portfolio_return = sum(
+                        self.data['return_list'].values[0][Week_ID,1:] * weights
+                    )
                 truth_indexing = self.indexing.values[Week_ID]
 
             # update portfolio value
-            # print(self.data.loc[self.day].Date.values[0])
             # exit()
             self.daily_return_memory.append(portfolio_return)
             new_portfolio_value = self.portfolio_value * (1 + np.sum(portfolio_return))
@@ -226,28 +243,32 @@ class StockPortfolioEnv(gym.Env):
             # save into memory
             self.portfolio_return_memory.append(np.sum(portfolio_return))
             self.truth_portfolio_memory.append(np.sum(truth_indexing))
-            
+
             self.asset_memory.append(new_portfolio_value)
             # self.asset_ratio.append(round(new_portfolio_value/self.asset_memory[-2],5))
-            
+
             if self.stock_dim == 430:
                 self.tracking_error.extend((truth_indexing - portfolio_return).tolist())
             else:
-                self.tracking_error.append(truth_indexing - portfolio_return) 
+                self.tracking_error.append(truth_indexing - portfolio_return)
 
             # self.tracking_error = [truth_indexing - portfolio_return]
             # jacarrd similarity
             sim = len(set(self.actions_memory[-1]).intersection(set(self.actions_memory[-2]))) / \
                   len(set(self.actions_memory[-1]).union(set(self.actions_memory[-2])))
             gap = np.mean(abs(truth_indexing - portfolio_return)) * 10
-            self.reward = (1 - np.clip(gap,0,1)**(1/5))**(5/1) - (1 - np.clip(sim,0,1)**(1/5))**(5/1)
-
+            if _env_flag("MC2P_LEGACY_SIT_REWARD"):
+                self.reward = (1 - np.clip(gap,0,1)**(1/5))**(5/1) - (1 - np.clip(sim,0,1)**(1/5))**(5/1)
+            else:
+                gap_reward = (1 - np.clip(gap,0,1)**(2/5))**(5/2)
+                temporal_cost = (1 - np.clip(sim,0,1)**(2/5))**(5/2)
+                self.reward = gap_reward - self.temporal_cost_weight * temporal_cost
             # load next state
             self.day += 1
             self.data = self.df.loc[self.day, :]
             self.state = np.array(self.data['price_list'].values[0][:,1:])
             # self.index_value = np.array(self.data['index_list'].values[0])
-            self.index_value = self.state[:,0]
+            self.index_value = _qp_target_index_value(self.data, self.state)
             self.date_memory.append(self.data.Week_ID.values[0])
 
         return self.state, self.reward, self.terminal, {}
@@ -258,6 +279,7 @@ class StockPortfolioEnv(gym.Env):
         self.data = self.df.loc[self.day, :]
         # load states
         self.state = np.array(self.data['price_list'].values[0][:,1:])
+        self.index_value = _qp_target_index_value(self.data, self.state)
         self.portfolio_value = self.initial_amount
         self.terminal = False
         self.portfolio_return_memory = [0]
@@ -275,7 +297,7 @@ class StockPortfolioEnv(gym.Env):
 
     def softmax_normalization(self, actions):
         # cpy_action = deepcopy(actions)
-        # max_number = heapq.nlargest(10, cpy_action) 
+        # max_number = heapq.nlargest(10, cpy_action)
         # max_index = []
         # for t in max_number:
         #     index = cpy_action.index(t)
@@ -319,7 +341,6 @@ class StockPortfolioEnv(gym.Env):
         # df_days_return = pd.DataFrame(
         #     {"date":df_date,"daily_return":return_list}
         #     )
-        # print(df_days_return)
         # exit()
         df_days_return = pd.DataFrame(return_list)
         # df_days_return.index = df_date.date
