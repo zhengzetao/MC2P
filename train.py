@@ -16,9 +16,18 @@ from preprocessor.preprocessors import FeatureEngineer, data_split, series_decom
 from env.env_portfolio import StockPortfolioEnv
 from env.conditional_topk_wrapper import ConditionalTopKWrapper
 from models import DRLAgent
-from plot import backtest_stats, backtest_plot, get_daily_return, get_baseline, convert_daily_return_to_pyfolio_ts
 
 import itertools
+
+
+def convert_daily_return_to_pyfolio_ts(df):
+    strategy_ret= df.copy()
+    strategy_ret['date'] = pd.to_datetime(strategy_ret['date'])
+    strategy_ret.set_index('date', drop = False, inplace = True)
+    strategy_ret.index = strategy_ret.index.tz_localize('UTC')
+    del strategy_ret['date']
+    ts = pd.Series(strategy_ret['daily_return'].values, index=strategy_ret.index)
+    return ts
 
 
 def _conditional_topk_enabled(value=None):

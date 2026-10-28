@@ -51,9 +51,7 @@ def main():
     # Import only the trainer needed by the selected dataset.
     if options.mode == "train":
         if options.dataset == 'SP500':
-            import train_SP500
-
-            train_SP500.train_stock_trading(options.dataset, options.K, options.strategy)
+            raise ValueError("The optional SP500 training script is not included in the core repository.")
         elif options.dataset.startswith('test'):
             import train_SSOA
 

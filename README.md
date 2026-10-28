@@ -28,7 +28,7 @@ Dependency versions are recorded from the existing Python 3.8 experiment environ
 
 The OR-Library CSV files already tracked in this repository remain available. Additional raw datasets, prepared data copies, and generated experiment artifacts are not included in this code update. Place the required files at the locations above before running the corresponding scenario.
 
-For S&P 500, `0.csv` is the reference index and each remaining CSV is an asset. The current loader expects 3,231 rows per series, with `Week_ID` and `Close` columns. SSOA training sets contain instance subdirectories with supplier CSV files; test sets contain supplier CSV files directly. Demand is read from the `Demand` column.
+The S&P 500 training script is maintained locally and is not included in this core-code repository. For that local data format, `0.csv` is the reference index and each remaining CSV is an asset. The current loader expects 3,231 rows per series, with `Week_ID` and `Close` columns. SSOA training sets contain instance subdirectories with supplier CSV files; test sets contain supplier CSV files directly. Demand is read from the `Demand` column.
 
 REDSET dataset aliases resolve to these Parquet files:
 
@@ -105,7 +105,6 @@ env/                         SIT, SSOA, REDSET, and conditional-decoding environ
 preprocessor/                Dataset loading and feature engineering
 tools/                       Neural layers, buffers, distributions, and optimization
 train.py                     OR-Library SIT training
-train_SP500.py               S&P 500 training
 train_SSOA.py                SSOA training
 train_redset.py               REDSET training
 baseline_redset.py            REDSET scheduling baselines
